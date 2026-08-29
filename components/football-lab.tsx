@@ -36,6 +36,39 @@ type Team = (typeof TEAMS)[TeamName];
 type View = 'Overview' | 'Match Lab' | 'Data Explorer' | 'Models';
 type Weights = { form: number; attack: number; defence: number; context: number };
 type Prediction = ReturnType<typeof calculatePrediction>;
+type CompetitionCoverage = {
+  liveEvents: boolean;
+  fixtureStatistics: boolean;
+  playerStatistics: boolean;
+  lineups: boolean;
+  predictions: boolean;
+  injuries: boolean;
+};
+type LiveCompetition = {
+  id: number;
+  name: string;
+  group: string;
+  providerName: string | null;
+  logo: string | null;
+  season: number | null;
+  available: boolean;
+  coverage: CompetitionCoverage;
+};
+type CompetitionFeed = {
+  connected: boolean;
+  provider?: string;
+  checkedAt?: string;
+  competitions?: LiveCompetition[];
+  summary?: {
+    requested: number;
+    available: number;
+    liveEvents: number;
+    fixtureStatistics: number;
+    playerStatistics: number;
+    injuries: number;
+  };
+  error?: string;
+};
 
 const chartConfig = {
   home: { label: 'Home xG', color: 'var(--color-chart-1)' },
@@ -51,6 +84,8 @@ export function FootballLab() {
   const [simulations, setSimulations] = useState(12480);
   const [running, setRunning] = useState(false);
   const [trained, setTrained] = useState(false);
+  const [competitionFeed, setCompetitionFeed] = useState<CompetitionFeed | null>(null);
+  const [feedLoading, setFeedLoading] = useState(true);
 
   useEffect(() => {
     const saved = window.localStorage.getItem('elevenlab-model');
@@ -64,6 +99,21 @@ export function FootballLab() {
   useEffect(() => {
     window.localStorage.setItem('elevenlab-model', JSON.stringify({ weights, simulations }));
   }, [weights, simulations]);
+  useEffect(() => {
+    let active = true;
+    fetch('/api/football/competitions')
+      .then(async (response) => {
+        const payload = await response.json() as CompetitionFeed;
+        if (active) setCompetitionFeed(payload);
+      })
+      .catch(() => {
+        if (active) setCompetitionFeed({ connected: false, error: 'The live data connection could not be reached.' });
+      })
+      .finally(() => {
+        if (active) setFeedLoading(false);
+      });
+    return () => { active = false; };
+  }, []);
 
   const prediction = useMemo(() => calculatePrediction(home, away, weights), [home, away, weights]);
   const trend = TEAMS[home].form.map((value, i) => ({ match: `M${i + 1}`, home: value, away: TEAMS[away].form[i] }));
@@ -73,17 +123,17 @@ export function FootballLab() {
   };
 
   return <main className="min-h-screen bg-background text-foreground">
-    <Header view={view} setView={setView} />
+    <Header view={view} setView={setView} connected={competitionFeed?.connected === true} feedLoading={feedLoading} />
     <div className="mx-auto max-w-[1480px] px-4 py-6 sm:px-6 lg:px-8">
       {view === 'Overview' && <Overview home={home} away={away} prediction={prediction} trend={trend} simulations={simulations} run={run} running={running} setView={setView} />}
       {view === 'Match Lab' && <MatchLab home={home} away={away} setHome={setHome} setAway={setAway} weights={weights} setWeights={setWeights} prediction={prediction} trend={trend} simulations={simulations} run={run} running={running} trained={trained} />}
-      {view === 'Data Explorer' && <DataExplorer />}
+      {view === 'Data Explorer' && <DataExplorer feed={competitionFeed} loading={feedLoading} />}
       {view === 'Models' && <Models weights={weights} setWeights={setWeights} simulations={simulations} run={run} running={running} trained={trained} />}
     </div>
   </main>;
 }
 
-function Header({ view, setView }: { view: View; setView: (view: View) => void }) {
+function Header({ view, setView, connected, feedLoading }: { view: View; setView: (view: View) => void; connected: boolean; feedLoading: boolean }) {
   const views: View[] = ['Overview', 'Match Lab', 'Data Explorer', 'Models'];
   return <header className="sticky top-0 z-30 border-b border-white/8 bg-background/90 backdrop-blur-xl">
     <div className="mx-auto flex h-16 max-w-[1480px] items-center gap-7 px-4 sm:px-6 lg:px-8">
@@ -96,7 +146,10 @@ function Header({ view, setView }: { view: View; setView: (view: View) => void }
       </nav>
       <div className="ml-auto flex items-center gap-2">
         <Button variant="outline" size="icon" aria-label="Search"><Search /></Button>
-        <Badge variant="outline" className="hidden h-8 gap-2 border-emerald-300/20 bg-emerald-300/5 px-3 text-emerald-200 md:flex"><span className="size-1.5 rounded-full bg-emerald-300 shadow-[0_0_8px_currentColor]" /> Model online</Badge>
+        <Badge variant="outline" className={`hidden h-8 gap-2 px-3 md:flex ${connected ? 'border-emerald-300/20 bg-emerald-300/5 text-emerald-200' : 'border-amber-300/20 bg-amber-300/5 text-amber-200'}`}>
+          {feedLoading ? <LoaderCircle className="size-3 animate-spin" /> : <span className="size-1.5 rounded-full bg-current shadow-[0_0_8px_currentColor]" />}
+          {feedLoading ? 'Connecting data' : connected ? 'Live data connected' : 'Data unavailable'}
+        </Badge>
         <ImportDialog />
       </div>
     </div>
@@ -162,13 +215,59 @@ function MatchLab({ home, away, setHome, setAway, weights, setWeights, predictio
   </>;
 }
 
-function DataExplorer() {
+function DataExplorer({ feed, loading }: { feed: CompetitionFeed | null; loading: boolean }) {
   const [metric, setMetric] = useState('xg');
   const rows = Object.entries(TEAMS).map(([team, data], i) => ({ team, ...data, shots: 14.9 - i * .62, ppda: 7.8 + i * .75, fieldTilt: 62 - i * 3 }));
   const sorted = [...rows].sort((a, b) => Number(b[metric as keyof typeof b]) - Number(a[metric as keyof typeof a]));
-  return <><Intro eyebrow="42 leagues · 18 seasons" title="Data explorer" copy="Move from basic results to advanced possession, pressing, chance-quality, and territorial metrics without losing context." action={<div className="flex gap-2"><Button variant="outline"><Upload /> CSV</Button><Button><Database /> Connect source</Button></div>} />
-    <div className="grid gap-4 xl:grid-cols-[1fr_320px]"><Card className="border-white/8 bg-card/75"><CardHeader className="flex-row items-center justify-between"><div><CardTitle>League comparison</CardTitle><p className="mt-1 text-xs text-muted-foreground">Change the metric to rerank the table.</p></div><Select value={metric} onValueChange={(value) => value && setMetric(value)}><SelectTrigger className="w-40"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="xg">Expected goals</SelectItem><SelectItem value="rating">Power rating</SelectItem><SelectItem value="press">Press rating</SelectItem><SelectItem value="fieldTilt">Field tilt</SelectItem></SelectContent></Select></CardHeader><CardContent className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-sm"><thead className="border-y border-white/8 text-[10px] uppercase tracking-[.12em] text-muted-foreground"><tr>{['Team', 'Rating', 'xG', 'xGA', 'Shots', 'PPDA', 'Field tilt', 'Trend'].map((head) => <th key={head} className="px-3 py-3 font-medium">{head}</th>)}</tr></thead><tbody>{sorted.map((row, i) => <tr key={row.team} className="border-b border-white/5 hover:bg-white/[.025]"><td className="px-3 py-4"><span className="mr-3 font-mono text-xs text-muted-foreground">{String(i + 1).padStart(2, '0')}</span><span className="font-medium">{row.team}</span></td><td className="px-3 font-mono">{row.rating}</td><td className="px-3 font-mono text-primary">{row.xg}</td><td className="px-3 font-mono">{row.xga}</td><td className="px-3 font-mono">{row.shots.toFixed(1)}</td><td className="px-3 font-mono">{row.ppda.toFixed(1)}</td><td className="px-3 font-mono">{row.fieldTilt}%</td><td className="px-3"><span className={`inline-flex items-center gap-1 ${i < 3 ? 'text-primary' : 'text-amber-200'}`}>{i < 3 ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />}{i < 3 ? '+' : '-'}{(1.2 + i * .4).toFixed(1)}%</span></td></tr>)}</tbody></table></CardContent></Card>
-      <div className="space-y-4"><Card className="border-white/8 bg-card/75"><CardHeader><CardTitle>Metric library</CardTitle><p className="text-xs text-muted-foreground">Basic through advanced</p></CardHeader><CardContent className="space-y-3">{['Results & form', 'Expected goals (xG)', 'Possession value', 'Field tilt', 'Pressing intensity', 'Shot quality', 'Set-piece threat', 'Player impact'].map((item, i) => <div key={item} className="flex items-center justify-between rounded-lg border border-white/7 bg-white/[.02] px-3 py-2.5 text-sm"><span>{item}</span><Badge variant="outline" className={i < 2 ? 'text-slate-300' : 'text-primary'}>{i < 2 ? 'Basic' : 'Advanced'}</Badge></div>)}</CardContent></Card><Card className="border-primary/12 bg-primary/[.045]"><CardContent className="p-4"><BrainCircuit className="mb-3 text-primary" /><p className="font-medium">Pattern scan ready</p><p className="mt-1 text-xs leading-5 text-muted-foreground">The engine found 14 meaningful relationships. Three remain strong after opponent adjustment.</p><Button className="mt-4 w-full" variant="outline">Review patterns</Button></CardContent></Card></div>
+  const summary = feed?.summary;
+  const coverageFields: Array<{ key: keyof CompetitionCoverage; label: string }> = [
+    { key: 'liveEvents', label: 'Live' },
+    { key: 'fixtureStatistics', label: 'Match stats' },
+    { key: 'playerStatistics', label: 'Players' },
+    { key: 'lineups', label: 'Lineups' },
+    { key: 'injuries', label: 'Injuries' },
+  ];
+  const statCards = [
+    { label: 'Competitions', value: summary ? `${summary.available}/${summary.requested}` : '--' },
+    { label: 'Live events', value: summary ? `${summary.liveEvents}/${summary.requested}` : '--' },
+    { label: 'Player stats', value: summary ? `${summary.playerStatistics}/${summary.requested}` : '--' },
+    { label: 'Injury data', value: summary ? `${summary.injuries}/${summary.requested}` : '--' },
+  ];
+
+  return <>
+    <Intro
+      eyebrow={loading ? 'Connecting to API-Football' : feed?.connected ? `API-Football · ${summary?.available ?? 0} competitions connected` : 'Live data connection'}
+      title="Data explorer"
+      copy="Inspect exactly which current-season data is available before it enters a model. Credentials stay on the server and responses are cached to protect the free API allowance."
+      action={<div className="flex gap-2"><Button variant="outline"><Upload /> CSV</Button><Button variant="outline" onClick={() => window.location.reload()}><RefreshCw /> Refresh</Button></div>}
+    />
+
+    <Card className="mb-4 border-primary/12 bg-card/75">
+      <CardHeader className="gap-1 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <CardTitle className="flex items-center gap-2"><Database className="size-4 text-primary" /> Live competition coverage</CardTitle>
+          <p className="mt-1 text-xs text-muted-foreground">Current-season capabilities reported by the data provider.</p>
+        </div>
+        <Badge variant="outline" className={feed?.connected ? 'border-primary/30 text-primary' : 'border-amber-300/30 text-amber-200'}>
+          {loading ? <><LoaderCircle className="mr-1 size-3 animate-spin" /> Checking</> : feed?.connected ? <><Check className="mr-1 size-3" /> Connected</> : 'Unavailable'}
+        </Badge>
+      </CardHeader>
+      <CardContent>
+        {loading ? <div className="flex min-h-48 items-center justify-center gap-3 text-sm text-muted-foreground"><LoaderCircle className="size-5 animate-spin text-primary" /> Auditing live data coverage…</div> : !feed?.connected ? <div className="rounded-xl border border-amber-300/15 bg-amber-300/[.04] p-5"><p className="font-medium text-amber-100">The football data service is not connected.</p><p className="mt-1 text-sm text-muted-foreground">{feed?.error ?? 'Check the server API key and try again.'}</p></div> : <>
+          <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{statCards.map((stat) => <div key={stat.label} className="rounded-xl border border-white/7 bg-white/[.02] p-4"><p className="font-mono text-xl text-primary">{stat.value}</p><p className="mt-1 text-xs text-muted-foreground">{stat.label}</p></div>)}</div>
+          <div className="overflow-x-auto rounded-xl border border-white/7">
+            <table className="w-full min-w-[820px] text-left text-sm">
+              <thead className="bg-white/[.025] text-[10px] uppercase tracking-[.12em] text-muted-foreground"><tr><th className="px-4 py-3 font-medium">Competition</th><th className="px-3 py-3 font-medium">Season</th>{coverageFields.map((field) => <th key={field.key} className="px-3 py-3 text-center font-medium">{field.label}</th>)}</tr></thead>
+              <tbody>{feed.competitions?.map((competition) => <tr key={competition.id} className="border-t border-white/6 hover:bg-white/[.02]"><td className="px-4 py-3"><div className="font-medium">{competition.name}</div><div className="mt-0.5 text-[11px] text-muted-foreground">{competition.group}</div></td><td className="px-3 font-mono text-xs">{competition.season ?? '—'}</td>{coverageFields.map((field) => <td key={field.key} className="px-3 text-center">{competition.coverage[field.key] ? <span className="inline-flex size-6 items-center justify-center rounded-full bg-primary/10 text-primary" title="Available"><Check className="size-3.5" /></span> : <span className="text-muted-foreground" title="Not supplied">—</span>}</td>)}</tr>)}</tbody>
+            </table>
+          </div>
+          <p className="mt-3 text-[11px] text-muted-foreground">A dash means the provider does not supply that field for the current season. Predictions are available for all connected competitions.</p>
+        </>}
+      </CardContent>
+    </Card>
+
+    <div className="grid gap-4 xl:grid-cols-[1fr_320px]"><Card className="border-white/8 bg-card/75"><CardHeader className="flex-row items-center justify-between"><div><CardTitle>Prototype analytics layer</CardTitle><p className="mt-1 text-xs text-muted-foreground">Demonstration metrics · change the metric to rerank the table.</p></div><Select value={metric} onValueChange={(value) => value && setMetric(value)}><SelectTrigger className="w-40"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="xg">Expected goals</SelectItem><SelectItem value="rating">Power rating</SelectItem><SelectItem value="press">Press rating</SelectItem><SelectItem value="fieldTilt">Field tilt</SelectItem></SelectContent></Select></CardHeader><CardContent className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-sm"><thead className="border-y border-white/8 text-[10px] uppercase tracking-[.12em] text-muted-foreground"><tr>{['Team', 'Rating', 'xG', 'xGA', 'Shots', 'PPDA', 'Field tilt', 'Trend'].map((head) => <th key={head} className="px-3 py-3 font-medium">{head}</th>)}</tr></thead><tbody>{sorted.map((row, i) => <tr key={row.team} className="border-b border-white/5 hover:bg-white/[.025]"><td className="px-3 py-4"><span className="mr-3 font-mono text-xs text-muted-foreground">{String(i + 1).padStart(2, '0')}</span><span className="font-medium">{row.team}</span></td><td className="px-3 font-mono">{row.rating}</td><td className="px-3 font-mono text-primary">{row.xg}</td><td className="px-3 font-mono">{row.xga}</td><td className="px-3 font-mono">{row.shots.toFixed(1)}</td><td className="px-3 font-mono">{row.ppda.toFixed(1)}</td><td className="px-3 font-mono">{row.fieldTilt}%</td><td className="px-3"><span className={`inline-flex items-center gap-1 ${i < 3 ? 'text-primary' : 'text-amber-200'}`}>{i < 3 ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />}{i < 3 ? '+' : '-'}{(1.2 + i * .4).toFixed(1)}%</span></td></tr>)}</tbody></table></CardContent></Card>
+      <div className="space-y-4"><Card className="border-white/8 bg-card/75"><CardHeader><CardTitle>Metric library</CardTitle><p className="text-xs text-muted-foreground">Basic through advanced</p></CardHeader><CardContent className="space-y-3">{['Results & form', 'Expected goals (xG)', 'Possession value', 'Field tilt', 'Pressing intensity', 'Shot quality', 'Set-piece threat', 'Player impact'].map((item, i) => <div key={item} className="flex items-center justify-between rounded-lg border border-white/7 bg-white/[.02] px-3 py-2.5 text-sm"><span>{item}</span><Badge variant="outline" className={i < 2 ? 'text-slate-300' : 'text-primary'}>{i < 2 ? 'Basic' : 'Advanced'}</Badge></div>)}</CardContent></Card><Card className="border-primary/12 bg-primary/[.045]"><CardContent className="p-4"><BrainCircuit className="mb-3 text-primary" /><p className="font-medium">Pattern engine foundation</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Live data is now connected. Historical ingestion, feature engineering, and validation come next before these signals influence predictions.</p><Button className="mt-4 w-full" variant="outline">View model plan</Button></CardContent></Card></div>
     </div>
   </>;
 }
