@@ -69,6 +69,25 @@ type CompetitionFeed = {
   };
   error?: string;
 };
+type UpcomingFixture = {
+  id: number;
+  kickoff: string;
+  timezone: string;
+  status: { long: string; short: string };
+  venue: { name: string | null; city: string | null };
+  league: { id: number; name: string; logo: string | null; season: number; round: string | null };
+  home: { id: number; name: string; logo: string | null };
+  away: { id: number; name: string; logo: string | null };
+};
+type FixtureFeed = {
+  connected: boolean;
+  restricted?: boolean;
+  provider?: string;
+  checkedAt?: string;
+  competition?: { id: number; name: string; season: number };
+  fixtures?: UpcomingFixture[];
+  error?: string;
+};
 
 const chartConfig = {
   home: { label: 'Home xG', color: 'var(--color-chart-1)' },
@@ -86,6 +105,9 @@ export function FootballLab() {
   const [trained, setTrained] = useState(false);
   const [competitionFeed, setCompetitionFeed] = useState<CompetitionFeed | null>(null);
   const [feedLoading, setFeedLoading] = useState(true);
+  const [selectedLeague, setSelectedLeague] = useState(39);
+  const [fixtureFeed, setFixtureFeed] = useState<FixtureFeed | null>(null);
+  const [fixturesLoading, setFixturesLoading] = useState(true);
 
   useEffect(() => {
     const saved = window.localStorage.getItem('elevenlab-model');
@@ -96,6 +118,22 @@ export function FootballLab() {
       if (data.simulations) setSimulations(data.simulations);
     } catch { /* Ignore malformed device-local data. */ }
   }, []);
+  useEffect(() => {
+    let active = true;
+    setFixturesLoading(true);
+    fetch(`/api/football/fixtures?league=${selectedLeague}`)
+      .then(async (response) => {
+        const payload = await response.json() as FixtureFeed;
+        if (active) setFixtureFeed(payload);
+      })
+      .catch(() => {
+        if (active) setFixtureFeed({ connected: false, error: 'The fixture service could not be reached.' });
+      })
+      .finally(() => {
+        if (active) setFixturesLoading(false);
+      });
+    return () => { active = false; };
+  }, [selectedLeague]);
   useEffect(() => {
     window.localStorage.setItem('elevenlab-model', JSON.stringify({ weights, simulations }));
   }, [weights, simulations]);
@@ -125,7 +163,7 @@ export function FootballLab() {
   return <main className="min-h-screen bg-background text-foreground">
     <Header view={view} setView={setView} connected={competitionFeed?.connected === true} feedLoading={feedLoading} />
     <div className="mx-auto max-w-[1480px] px-4 py-6 sm:px-6 lg:px-8">
-      {view === 'Overview' && <Overview home={home} away={away} prediction={prediction} trend={trend} simulations={simulations} run={run} running={running} setView={setView} />}
+      {view === 'Overview' && <Overview feed={fixtureFeed} loading={fixturesLoading} competitions={competitionFeed?.competitions ?? []} selectedLeague={selectedLeague} setSelectedLeague={setSelectedLeague} setView={setView} />}
       {view === 'Match Lab' && <MatchLab home={home} away={away} setHome={setHome} setAway={setAway} weights={weights} setWeights={setWeights} prediction={prediction} trend={trend} simulations={simulations} run={run} running={running} trained={trained} />}
       {view === 'Data Explorer' && <DataExplorer feed={competitionFeed} loading={feedLoading} />}
       {view === 'Models' && <Models weights={weights} setWeights={setWeights} simulations={simulations} run={run} running={running} trained={trained} />}
@@ -148,7 +186,7 @@ function Header({ view, setView, connected, feedLoading }: { view: View; setView
         <Button variant="outline" size="icon" aria-label="Search"><Search /></Button>
         <Badge variant="outline" className={`hidden h-8 gap-2 px-3 md:flex ${connected ? 'border-emerald-300/20 bg-emerald-300/5 text-emerald-200' : 'border-amber-300/20 bg-amber-300/5 text-amber-200'}`}>
           {feedLoading ? <LoaderCircle className="size-3 animate-spin" /> : <span className="size-1.5 rounded-full bg-current shadow-[0_0_8px_currentColor]" />}
-          {feedLoading ? 'Connecting data' : connected ? 'Live data connected' : 'Data unavailable'}
+          {feedLoading ? 'Connecting data' : connected ? 'Data source connected' : 'Data unavailable'}
         </Badge>
         <ImportDialog />
       </div>
@@ -165,16 +203,29 @@ function Intro({ eyebrow, title, copy, action }: { eyebrow: string; title: strin
   </section>;
 }
 
-function Overview({ home, away, prediction, trend, simulations, run, running, setView }: { home: TeamName; away: TeamName; prediction: Prediction; trend: { match: string; home: number; away: number }[]; simulations: number; run: () => void; running: boolean; setView: (view: View) => void }) {
+function Overview({ feed, loading, competitions, selectedLeague, setSelectedLeague, setView }: { feed: FixtureFeed | null; loading: boolean; competitions: LiveCompetition[]; selectedLeague: number; setSelectedLeague: (league: number) => void; setView: (view: View) => void }) {
+  const fixtures = feed?.fixtures ?? [];
+  const nextFixture = fixtures[0];
   return <>
-    <Intro eyebrow="Premier League / Matchweek 8" title="Prediction command centre" copy="Study the numbers, test your assumptions, and let the model surface the signal hiding inside the noise." action={<Button variant="outline" className="w-fit rounded-full border-white/10 bg-white/[.025] px-4 text-muted-foreground">Season 2026/27 <ChevronDown /></Button>} />
-    <section className="grid gap-4 xl:grid-cols-[1.42fr_.86fr]"><PredictionCard home={home} away={away} prediction={prediction} simulations={simulations} /><AnalystCard home={home} away={away} prediction={prediction} /></section>
-    <section className="mt-4 grid gap-4 lg:grid-cols-[1.25fr_.75fr]">
-      <Card className="border-white/8 bg-card/75"><CardHeader className="flex-row items-center justify-between"><div><CardTitle>Performance trajectory</CardTitle><p className="mt-1 text-xs text-muted-foreground">Rolling xG, last six matches</p></div><LineIcon className="size-4 text-primary" /></CardHeader><CardContent><TrendChart data={trend} /></CardContent></Card>
-      <Card className="border-white/8 bg-card/75"><CardHeader><CardTitle>Model health</CardTitle><p className="text-xs text-muted-foreground">Rolling 90-day validation window</p></CardHeader><CardContent className="space-y-5"><Health label="Outcome accuracy" value={67} detail="+3.8% vs baseline" /><Health label="Calibration score" value={82} detail="Well calibrated" /><Health label="Data coverage" value={94} detail="42 leagues · 18 seasons" /><Button onClick={() => setView('Models')} variant="outline" className="w-full">Inspect the model <ArrowUpRight /></Button></CardContent></Card>
-    </section>
-    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/8 bg-white/[.025] px-4 py-3 text-xs text-muted-foreground"><span className="flex items-center gap-2"><ShieldCheck className="size-4 text-primary" /> Transparent inputs · uncertainty preserved · every inference traceable</span><Button onClick={run} disabled={running} size="sm" variant="ghost" className="text-primary">{running ? <LoaderCircle className="animate-spin" /> : <RefreshCw />} Run 10k simulations</Button></div>
+    <Intro eyebrow="Verified provider schedule" title="Upcoming fixtures" copy="Current fixtures are displayed only when returned by the connected statistics provider. No match, date, venue, or prediction is invented." action={<Select value={String(selectedLeague)} onValueChange={(value) => value && setSelectedLeague(Number(value))}><SelectTrigger className="w-[230px]"><SelectValue /></SelectTrigger><SelectContent>{competitions.length ? competitions.map((competition) => <SelectItem key={competition.id} value={String(competition.id)}>{competition.name}</SelectItem>) : <SelectItem value="39">Premier League</SelectItem>}</SelectContent></Select>} />
+
+    {loading ? <Card className="border-white/8 bg-card/75"><CardContent className="flex min-h-[320px] items-center justify-center gap-3 text-sm text-muted-foreground"><LoaderCircle className="size-5 animate-spin text-primary" /> Loading the provider schedule…</CardContent></Card> : feed?.restricted ? <Card className="border-amber-300/20 bg-[linear-gradient(145deg,rgba(251,191,36,.07),rgba(13,20,29,.88)_48%)]"><CardContent className="grid gap-6 p-6 lg:grid-cols-[1fr_auto] lg:items-center"><div><Badge variant="outline" className="mb-4 border-amber-300/25 text-amber-200">Provider plan restriction</Badge><h2 className="text-2xl font-semibold tracking-[-.035em]">Current fixtures are not available on this API plan</h2><p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">{feed.error} The connection itself works, but the provider will not return the live {feed.competition?.name ?? 'competition'} schedule until the plan or data source changes.</p><div className="mt-5 flex flex-wrap gap-2"><Button onClick={() => setView('Data Explorer')} variant="outline">Review available coverage</Button><Badge variant="outline" className="h-9 px-3 text-muted-foreground">Requested season {feed.competition?.season}/{String((feed.competition?.season ?? 0) + 1).slice(-2)}</Badge></div></div><ShieldCheck className="hidden size-16 text-amber-200/45 lg:block" /></CardContent></Card> : !feed?.connected ? <Card className="border-amber-300/20 bg-card/75"><CardContent className="p-6"><h2 className="font-semibold text-amber-100">Fixture service unavailable</h2><p className="mt-2 text-sm text-muted-foreground">{feed?.error ?? 'The provider did not return a schedule.'}</p></CardContent></Card> : !nextFixture ? <Card className="border-white/8 bg-card/75"><CardContent className="p-6"><h2 className="font-semibold">No upcoming fixtures returned</h2><p className="mt-2 text-sm text-muted-foreground">There are currently no future matches in the provider response for {feed.competition?.name}.</p></CardContent></Card> : <>
+      <Card className="relative border-primary/15 bg-card/80 py-0"><div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/80 to-transparent" /><CardHeader className="border-b border-white/8 px-5 py-5 sm:flex-row sm:items-center sm:justify-between"><div><div className="mb-2 flex flex-wrap items-center gap-2"><Badge className="bg-primary/12 text-primary">Next confirmed fixture</Badge><span className="text-xs text-muted-foreground">{formatKickoff(nextFixture.kickoff)}{nextFixture.venue.name ? ` · ${nextFixture.venue.name}` : ''}</span></div><CardTitle className="text-xl">{nextFixture.home.name} vs {nextFixture.away.name}</CardTitle></div><div className="mt-3 text-xs text-muted-foreground sm:mt-0">{nextFixture.league.round ?? nextFixture.status.long}</div></CardHeader><CardContent className="grid items-center gap-6 p-6 sm:grid-cols-[1fr_auto_1fr]"><FixtureTeam team={nextFixture.home} /><div className="text-center"><p className="font-mono text-2xl text-primary">{formatTime(nextFixture.kickoff)}</p><p className="mt-1 text-[11px] uppercase tracking-[.14em] text-muted-foreground">Europe/London</p></div><FixtureTeam team={nextFixture.away} align="right" /></CardContent></Card>
+      <section className="mt-4"><div className="mb-3 flex items-end justify-between"><div><h2 className="font-semibold">Following fixtures</h2><p className="mt-1 text-xs text-muted-foreground">Provider-confirmed schedule for {feed.competition?.name}</p></div><Badge variant="outline">{fixtures.length} matches</Badge></div><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{fixtures.slice(1).map((fixture) => <Card key={fixture.id} className="border-white/8 bg-card/70"><CardContent className="p-4"><div className="mb-3 flex items-center justify-between text-[11px] text-muted-foreground"><span>{formatKickoff(fixture.kickoff)}</span><span>{fixture.league.round ?? fixture.status.short}</span></div><div className="space-y-2 text-sm"><div className="flex items-center gap-2">{fixture.home.logo && <img src={fixture.home.logo} alt="" className="size-5 object-contain" />}<span className="font-medium">{fixture.home.name}</span></div><div className="flex items-center gap-2">{fixture.away.logo && <img src={fixture.away.logo} alt="" className="size-5 object-contain" />}<span className="font-medium">{fixture.away.name}</span></div></div>{fixture.venue.name && <p className="mt-3 truncate text-[11px] text-muted-foreground">{fixture.venue.name}</p>}</CardContent></Card>)}</div></section>
+    </>}
   </>;
+}
+
+function FixtureTeam({ team, align }: { team: UpcomingFixture['home']; align?: 'right' }) {
+  return <div className={`flex items-center gap-3 ${align === 'right' ? 'flex-row-reverse text-right' : ''}`}>{team.logo ? <img src={team.logo} alt="" className="size-14 object-contain" /> : <span className="grid size-14 place-items-center rounded-full bg-white/5 text-sm font-semibold">{team.name.slice(0, 3).toUpperCase()}</span>}<div><p className="text-lg font-semibold">{team.name}</p><p className="text-xs text-muted-foreground">Provider team ID {team.id}</p></div></div>;
+}
+
+function formatKickoff(value: string) {
+  return new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/London' }).format(new Date(value));
+}
+
+function formatTime(value: string) {
+  return new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/London' }).format(new Date(value));
 }
 
 function PredictionCard({ home, away, prediction, simulations }: { home: TeamName; away: TeamName; prediction: Prediction; simulations: number }) {
