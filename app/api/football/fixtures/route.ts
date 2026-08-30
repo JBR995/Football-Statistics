@@ -51,12 +51,7 @@ export async function GET(request: Request) {
   const fallbackSeason = today.getUTCMonth() >= 6 ? today.getUTCFullYear() : today.getUTCFullYear() - 1;
   const requestedSeason = Number(searchParams.get('season'));
   const season = Number.isInteger(requestedSeason) && requestedSeason >= 2000 && requestedSeason <= 2100 ? requestedSeason : fallbackSeason;
-  const requestedFrom = searchParams.get('from');
-  const from = requestedFrom && /^\d{4}-\d{2}-\d{2}$/.test(requestedFrom) ? requestedFrom : today.toISOString().slice(0, 10);
-  const toDate = new Date(`${from}T12:00:00Z`);
-  toDate.setUTCDate(toDate.getUTCDate() + 31);
-  const to = toDate.toISOString().slice(0, 10);
-  const cacheKey = `${leagueId}:${season}:${from}`;
+  const cacheKey = `${leagueId}:${season}:schedule`;
   const now = Date.now();
   const cached = memoryCache.get(cacheKey);
   if (cached && cached.expiresAt > now) return jsonResponse(cached.body, cached.status, 'memory', cached.cacheSeconds);
@@ -69,8 +64,6 @@ export async function GET(request: Request) {
   const url = new URL(API_URL);
   url.searchParams.set('league', String(leagueId));
   url.searchParams.set('season', String(season));
-  url.searchParams.set('from', from);
-  url.searchParams.set('to', to);
   url.searchParams.set('timezone', 'Europe/London');
 
   try {
@@ -99,7 +92,11 @@ export async function GET(request: Request) {
       return Response.json({ connected: false, error: 'The statistics service returned an unexpected response.' }, { status: 502, headers: { 'Cache-Control': 'no-store' } });
     }
 
-    const fixtures = payload.response.map((item) => ({
+    const fixtures = payload.response
+      .filter((item) => item.fixture.status.short === 'NS' || item.fixture.status.short === 'TBD')
+      .sort((a, b) => Date.parse(a.fixture.date) - Date.parse(b.fixture.date))
+      .slice(0, 12)
+      .map((item) => ({
       id: item.fixture.id,
       kickoff: item.fixture.date,
       timezone: item.fixture.timezone,
@@ -108,7 +105,7 @@ export async function GET(request: Request) {
       league: item.league,
       home: item.teams.home,
       away: item.teams.away,
-    })).slice(0, 12);
+      }));
     const body = JSON.stringify({ connected: true, restricted: false, provider: 'API-Football', checkedAt: new Date().toISOString(), competition: { id: leagueId, name: competitionName, season }, fixtures });
     memoryCache.set(cacheKey, { expiresAt: now + CACHE_SECONDS * 1000, body, status: 200, cacheSeconds: CACHE_SECONDS });
     return jsonResponse(body, 200, 'upstream');

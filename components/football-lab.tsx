@@ -144,8 +144,7 @@ export function FootballLab() {
     }
     let active = true;
     setFixturesLoading(true);
-    const from = new Date().toISOString().slice(0, 10);
-    fetch(`/api/football/fixtures?league=${selectedLeague}&season=${selectedSeason}&from=${from}`)
+    fetch(`/api/football/fixtures?league=${selectedLeague}&season=${selectedSeason}`)
       .then(async (response) => {
         const payload = await response.json() as FixtureFeed;
         if (active) setFixtureFeed(payload);
