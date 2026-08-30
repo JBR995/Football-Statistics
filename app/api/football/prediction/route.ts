@@ -5,7 +5,7 @@ const HOME_ADVANTAGE_ELO = 65;
 const ELO_K = 24;
 const SCORE_LIMIT = 7;
 
-type FixtureRow = {
+export type FixtureRow = {
   id: number;
   competition_id: number;
   competition_name: string;
@@ -178,7 +178,7 @@ function modelPrediction(target: FixtureRow, history: FixtureRow[]): ModelOutput
   };
 }
 
-function backtest(history: FixtureRow[]) {
+export function backtest(history: FixtureRow[]) {
   let correct = 0;
   let brier = 0;
   let logLoss = 0;

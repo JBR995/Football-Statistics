@@ -78,6 +78,26 @@ export async function GET() {
         } : null,
       };
     });
+    const storedKeys = new Set(seasons.map((season) => `${season.competitionId}:${season.season}`));
+    for (const [key, sync] of latestSync) {
+      if (storedKeys.has(key)) continue;
+      seasons.push({
+        competitionId: sync.competition_id,
+        season: sync.season,
+        name: '',
+        country: null,
+        logo: null,
+        records: 0,
+        lastUpdatedAt: sync.finished_at ?? sync.started_at,
+        sync: {
+          status: sync.status,
+          records: sync.records,
+          error: sync.error,
+          startedAt: sync.started_at,
+          finishedAt: sync.finished_at,
+        },
+      });
+    }
 
     return Response.json({
       connected: true,
