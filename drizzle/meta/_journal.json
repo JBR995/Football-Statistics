@@ -8,6 +8,13 @@
       "when": 1788092479194,
       "tag": "0000_glorious_mojo",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1788117649865,
+      "tag": "0001_steep_gateway",
+      "breakpoints": true
     }
   ]
 }

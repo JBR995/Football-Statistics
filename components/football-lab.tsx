@@ -1,12 +1,12 @@
 'use client';
 
-import { createElement, useEffect, useState, type ReactNode } from 'react';
+import { createElement, useEffect, useState, type Key, type ReactNode } from 'react';
 import {
   Activity, ArrowUpRight, BrainCircuit, Check, CircleDot, Database, Gauge,
   LineChart as LineIcon, LoaderCircle, RefreshCw, Search, ShieldCheck, Target,
   Upload, Zap,
 } from 'lucide-react';
-import { Bar, BarChart, CartesianGrid, Cell, XAxis, YAxis } from 'recharts';
+import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ReferenceLine, XAxis, YAxis } from 'recharts';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -144,10 +144,39 @@ const FIXTURE_COMPETITIONS = [
 ] as const;
 const EMPTY_FIXTURES: StoredFixture[] = [];
 
+type ForecastRecordFeed = {
+  connected: boolean;
+  model?: { name: string; version: string };
+  windowDays?: number;
+  coverage?: {
+    upcoming: number;
+    covered: number;
+    byCompetition: Array<{ competitionId: number; competition: string | null; upcoming: number; covered: number }>;
+  };
+  awaitingResult?: number;
+  performance?: ForecastScore;
+  byCompetition?: Array<ForecastScore & { competitionId: number; competition: string | null }>;
+  calibration?: {
+    points: number;
+    expectedCalibrationError: number | null;
+    bins: Array<{ from: number; to: number; count: number; predicted: number; observed: number }>;
+  };
+  methodology?: string;
+  error?: string;
+};
+type ForecastScore = {
+  matches: number;
+  accuracy: number | null;
+  brier: number | null;
+  logLoss: number | null;
+  medianLeadHours: number | null;
+};
+
 const chartConfig = {
   home: { label: 'Home xG', color: 'var(--color-chart-1)' },
   away: { label: 'Away xG', color: 'var(--color-chart-3)' },
   value: { label: 'Probability', color: 'var(--color-chart-1)' },
+  observed: { label: 'Observed frequency', color: 'var(--color-chart-1)' },
 } satisfies ChartConfig;
 
 export function FootballLab() {
@@ -679,7 +708,148 @@ function Models() {
       <div className="grid gap-4 xl:grid-cols-[.9fr_1.1fr]"><Card className="border-white/8 bg-card/75"><CardHeader><CardTitle>Accuracy by competition</CardTitle><p className="text-xs text-muted-foreground">Descriptive only; calibration metrics remain the primary model check.</p></CardHeader><CardContent><ChartContainer config={chartConfig} className="h-[320px] w-full"><BarChart data={chartData} layout="vertical"><CartesianGrid horizontal={false} strokeDasharray="4 4" /><XAxis type="number" domain={[0, 100]} hide /><YAxis type="category" dataKey="competition" width={100} axisLine={false} tickLine={false} /><ChartTooltip content={<ChartTooltipContent />} /><Bar dataKey="value" fill="var(--color-chart-1)" radius={[0, 6, 6, 0]} /></BarChart></ChartContainer></CardContent></Card><Card className="border-white/8 bg-card/75"><CardHeader><CardTitle>Evaluation ledger</CardTitle><p className="text-xs text-muted-foreground">Current stored history and out-of-sample performance</p></CardHeader><CardContent className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-sm"><thead className="border-y border-white/8 text-[10px] uppercase tracking-[.12em] text-muted-foreground"><tr>{['Competition', 'Seasons', 'Training', 'Validation', 'Accuracy', 'Brier', 'Log loss'].map((head) => <th key={head} className="px-3 py-3 font-medium">{head}</th>)}</tr></thead><tbody>{feed.evaluations?.map((evaluation) => <tr key={evaluation.competitionId} className="border-b border-white/6"><td className="px-3 py-3 font-medium">{evaluation.competition}</td><td className="px-3 font-mono text-xs">{evaluation.seasons}</td><td className="px-3 font-mono text-xs">{evaluation.trainingMatches.toLocaleString()}</td><td className="px-3 font-mono text-xs">{evaluation.validation.matches}</td><td className="px-3 font-mono text-primary">{evaluation.validation.accuracy}%</td><td className="px-3 font-mono text-xs">{evaluation.validation.brier ?? '—'}</td><td className="px-3 font-mono text-xs">{evaluation.validation.logLoss ?? '—'}</td></tr>)}</tbody></table></CardContent></Card></div>
       <div className="rounded-xl border border-primary/15 bg-primary/[.04] p-4 text-xs leading-5 text-muted-foreground"><ShieldCheck className="mb-2 size-4 text-primary" />{feed.methodology} Accuracy is not used alone: Brier score and log loss measure whether the probabilities themselves are trustworthy.</div>
     </div>}
+    <div className="mt-4"><ForecastRecord /></div>
   </>;
+}
+
+function ForecastRecord() {
+  const [feed, setFeed] = useState<ForecastRecordFeed | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [recording, setRecording] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch('/api/football/predictions/snapshot?withinDays=14', { cache: 'no-store' });
+      setFeed(await response.json() as ForecastRecordFeed);
+    } catch { setFeed({ connected: false, error: 'The forecast record could not be reached.' }); }
+    finally { setLoading(false); }
+  };
+
+  const record = async () => {
+    setRecording(true); setNotice(null);
+    try {
+      const response = await fetch('/api/football/predictions/snapshot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ withinDays: 14 }),
+      });
+      const result = await response.json() as { connected: boolean; scanned?: number; stored?: number; unchanged?: number; error?: string };
+      setNotice(result.connected
+        ? `${result.stored ?? 0} new forecast${result.stored === 1 ? '' : 's'} recorded from ${result.scanned ?? 0} upcoming fixture${result.scanned === 1 ? '' : 's'}; ${result.unchanged ?? 0} unchanged.`
+        : result.error ?? 'Forecasts could not be recorded.');
+    } catch { setNotice('Forecasts could not be recorded.'); }
+    finally { setRecording(false); await load(); }
+  };
+
+  useEffect(() => { void load(); }, []);
+
+  const performance = feed?.performance;
+  const calibration = feed?.calibration;
+  const bins = (calibration?.bins ?? []).map((bin) => ({
+    predicted: Math.round(bin.predicted * 1000) / 10,
+    observed: Math.round(bin.observed * 1000) / 10,
+    count: bin.count,
+  }));
+  const uncovered = (feed?.coverage?.upcoming ?? 0) - (feed?.coverage?.covered ?? 0);
+  // A band holding two forecasts should not read as loudly as one holding forty.
+  const heaviestBin = Math.max(1, ...bins.map((bin) => bin.count));
+
+  return <Card className="border-white/8 bg-card/75">
+    <CardHeader className="gap-2 sm:flex sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <CardTitle className="flex items-center gap-2"><ShieldCheck className="size-4 text-primary" /> Pre-kickoff forecast record</CardTitle>
+        <p className="mt-1 text-xs text-muted-foreground">Forecasts stored before kickoff and scored once the result arrives. Nothing recorded after a kickoff is counted.</p>
+      </div>
+      <Button variant="outline" size="sm" onClick={() => void record()} disabled={recording || loading}>
+        {recording ? <LoaderCircle className="animate-spin" /> : <Upload />} {recording ? 'Recording…' : 'Record forecasts'}
+      </Button>
+    </CardHeader>
+    <CardContent>
+      {loading && !feed ? <div className="flex min-h-40 items-center justify-center gap-3 text-sm text-muted-foreground"><LoaderCircle className="size-5 animate-spin text-primary" /> Reading the forecast record…</div>
+        : !feed?.connected ? <div className="rounded-xl border border-amber-300/15 bg-amber-300/[.04] p-5"><p className="font-medium text-amber-100">The forecast record is unavailable.</p><p className="mt-1 text-sm text-muted-foreground">{feed?.error ?? 'No prediction snapshots have been stored.'}</p></div>
+        : <div className="space-y-4">
+          {notice && <p className="rounded-lg border border-primary/15 bg-primary/[.04] px-3 py-2 text-xs text-muted-foreground">{notice}</p>}
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <MiniMetric label={`Upcoming fixtures covered (${feed.windowDays ?? 14}d)`} value={`${feed.coverage?.covered ?? 0}/${feed.coverage?.upcoming ?? 0}`} />
+            <MiniMetric label="Awaiting a result" value={feed.awaitingResult ?? 0} />
+            <MiniMetric label="Forecasts scored" value={performance?.matches ?? 0} />
+            <MiniMetric label="Median lead time" value={performance?.medianLeadHours === null || performance?.medianLeadHours === undefined ? '—' : `${performance.medianLeadHours}h`} />
+          </div>
+
+          {!performance?.matches ? <p className="rounded-xl border border-white/7 bg-white/[.02] p-4 text-xs leading-5 text-muted-foreground">
+            No stored forecast has been settled yet{uncovered > 0 ? `, and ${uncovered} upcoming fixture${uncovered === 1 ? ' has' : 's have'} no forecast on record` : ''}. Record forecasts before kickoff, and this panel fills in as those matches finish. Until then the walk-forward figures above are the only evidence available.
+          </p> : <>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <MiniMetric label="Outcome accuracy" value={performance.accuracy === null ? '—' : `${performance.accuracy}%`} />
+              <MiniMetric label="Brier score" value={performance.brier ?? '—'} />
+              <MiniMetric label="Log loss" value={performance.logLoss ?? '—'} />
+              <MiniMetric label="Calibration error" value={calibration?.expectedCalibrationError ?? '—'} />
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-[1.05fr_.95fr]">
+              <div className="rounded-xl border border-white/7 bg-white/[.02] p-4">
+                <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
+                  <p className="text-sm font-medium">Reliability</p>
+                  <div className="flex items-center gap-4 text-[10px] text-muted-foreground">
+                    <span className="flex items-center gap-1.5"><span className="inline-block h-0.5 w-4 rounded" style={{ background: 'var(--color-chart-1)' }} />Observed</span>
+                    <span className="flex items-center gap-1.5"><span className="inline-block h-0 w-4 border-t-2 border-dashed border-muted-foreground/70" />Perfect calibration</span>
+                  </div>
+                </div>
+                <p className="mb-3 text-[11px] text-muted-foreground">How often outcomes given an <em>x</em>% chance actually happened, across {calibration?.points ?? 0} forecast probabilities. Larger points hold more forecasts.</p>
+                <ChartContainer config={chartConfig} className="h-[260px] w-full">
+                  <LineChart data={bins} margin={{ top: 8, right: 12, bottom: 4, left: 4 }}>
+                    <CartesianGrid strokeDasharray="4 4" />
+                    <XAxis type="number" dataKey="predicted" domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} tickFormatter={(value: number) => `${value}%`} axisLine={false} tickLine={false} />
+                    <YAxis type="number" domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} tickFormatter={(value: number) => `${value}%`} width={40} axisLine={false} tickLine={false} />
+                    <ReferenceLine segment={[{ x: 0, y: 0 }, { x: 100, y: 100 }]} stroke="var(--muted-foreground)" strokeDasharray="5 5" strokeOpacity={.7} />
+                    <ChartTooltip content={<ChartTooltipContent />} />
+                    <Line
+                      type="linear"
+                      dataKey="observed"
+                      stroke="var(--color-chart-1)"
+                      strokeWidth={2}
+                      activeDot={{ r: 7 }}
+                      dot={({ key, cx, cy, payload }: { key?: Key | null; cx?: number; cy?: number; payload?: { count?: number } }) =>
+                        <circle key={key} cx={cx} cy={cy} r={3 + 4 * Math.sqrt((payload?.count ?? 1) / heaviestBin)} fill="var(--color-chart-1)" stroke="var(--card)" strokeWidth={2} />}
+                    />
+                  </LineChart>
+                </ChartContainer>
+                <p className="mt-2 text-[10px] leading-4 text-muted-foreground">On the dashed line, forecasts are honest. Above it the model is underconfident; below it, overconfident.</p>
+              </div>
+
+              <div className="overflow-x-auto rounded-xl border border-white/7">
+                <table className="w-full min-w-[420px] text-left text-sm">
+                  <thead className="bg-white/[.025] text-[10px] uppercase tracking-[.12em] text-muted-foreground"><tr><th className="px-3 py-3 font-medium">Forecast band</th><th className="px-3 py-3 text-right font-medium">Forecasts</th><th className="px-3 py-3 text-right font-medium">Mean forecast</th><th className="px-3 py-3 text-right font-medium">Observed</th></tr></thead>
+                  <tbody>{(calibration?.bins ?? []).map((bin) => <tr key={bin.from} className="border-t border-white/6">
+                    <td className="px-3 py-2.5 font-mono text-xs">{Math.round(bin.from * 100)}–{Math.round(bin.to * 100)}%</td>
+                    <td className="px-3 text-right font-mono text-xs">{bin.count}</td>
+                    <td className="px-3 text-right font-mono text-xs">{Math.round(bin.predicted * 1000) / 10}%</td>
+                    <td className="px-3 text-right font-mono text-xs text-primary">{Math.round(bin.observed * 1000) / 10}%</td>
+                  </tr>)}</tbody>
+                </table>
+              </div>
+            </div>
+
+            {Boolean(feed.byCompetition?.length) && <div className="overflow-x-auto rounded-xl border border-white/7">
+              <table className="w-full min-w-[640px] text-left text-sm">
+                <thead className="bg-white/[.025] text-[10px] uppercase tracking-[.12em] text-muted-foreground"><tr>{['Competition', 'Scored', 'Accuracy', 'Brier', 'Log loss', 'Lead'].map((head) => <th key={head} className="px-3 py-3 font-medium">{head}</th>)}</tr></thead>
+                <tbody>{feed.byCompetition?.map((row) => <tr key={row.competitionId} className="border-t border-white/6">
+                  <td className="px-3 py-2.5 font-medium">{row.competition ?? `Competition ${row.competitionId}`}</td>
+                  <td className="px-3 font-mono text-xs">{row.matches}</td>
+                  <td className="px-3 font-mono text-primary">{row.accuracy === null ? '—' : `${row.accuracy}%`}</td>
+                  <td className="px-3 font-mono text-xs">{row.brier ?? '—'}</td>
+                  <td className="px-3 font-mono text-xs">{row.logLoss ?? '—'}</td>
+                  <td className="px-3 font-mono text-xs">{row.medianLeadHours === null ? '—' : `${row.medianLeadHours}h`}</td>
+                </tr>)}</tbody>
+              </table>
+            </div>}
+          </>}
+          {feed.methodology && <p className="text-[10px] leading-4 text-muted-foreground">{feed.methodology}</p>}
+        </div>}
+    </CardContent>
+  </Card>;
 }
 
 function SmallStat({ icon, label, value, note }: { icon: ReactNode; label: string; value: string; note: string }) { return <Card className="border-white/8 bg-card/75"><CardContent className="flex items-center gap-4 p-4"><span className="grid size-10 place-items-center rounded-xl bg-primary/10 text-primary [&>svg]:size-4">{icon}</span><div><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1 text-xl font-semibold tracking-tight">{value}</p><p className="text-[10px] text-muted-foreground">{note}</p></div></CardContent></Card>; }

@@ -1,4 +1,4 @@
-import { index, integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { index, integer, primaryKey, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
 export const competitions = sqliteTable('competitions', {
   id: integer('id').notNull(),
@@ -45,3 +45,25 @@ export const syncRuns = sqliteTable('sync_runs', {
   startedAt: text('started_at').notNull(),
   finishedAt: text('finished_at'),
 }, (table) => [index('idx_sync_runs_competition_season').on(table.competitionId, table.season)]);
+
+export const predictionSnapshots = sqliteTable('prediction_snapshots', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  fixtureId: integer('fixture_id').notNull(),
+  competitionId: integer('competition_id').notNull(),
+  season: integer('season').notNull(),
+  kickoff: text('kickoff').notNull(),
+  modelName: text('model_name').notNull(),
+  modelVersion: text('model_version').notNull(),
+  homeProbability: real('home_probability').notNull(),
+  drawProbability: real('draw_probability').notNull(),
+  awayProbability: real('away_probability').notNull(),
+  expectedHomeGoals: real('expected_home_goals').notNull(),
+  expectedAwayGoals: real('expected_away_goals').notNull(),
+  over25Probability: real('over25_probability').notNull(),
+  bttsProbability: real('btts_probability').notNull(),
+  trainingMatches: integer('training_matches').notNull(),
+  createdAt: text('created_at').notNull(),
+}, (table) => [
+  index('idx_prediction_snapshots_fixture').on(table.fixtureId, table.modelVersion, table.id),
+  index('idx_prediction_snapshots_kickoff').on(table.kickoff),
+]);

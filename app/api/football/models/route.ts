@@ -1,5 +1,6 @@
 import { ensureFootballSchema } from '@/db/football';
-import { backtest, type FixtureRow } from '@/app/api/football/prediction/route';
+import { readCompletedHistory } from '@/db/fixtures';
+import { backtest, MODEL_NAME, MODEL_VERSION } from '@/lib/model';
 
 type CompetitionRow = { id: number; name: string; latest_season: number };
 
@@ -15,20 +16,11 @@ export async function GET() {
 
     const evaluations = [];
     for (const competition of competitions) {
-      const history = (await db.prepare(`
-        SELECT f.id, f.competition_id, c.name AS competition_name, f.season, f.kickoff, f.status, f.round, f.venue,
-               f.home_team_id, ht.name AS home_name, ht.logo AS home_logo,
-               f.away_team_id, at.name AS away_name, at.logo AS away_logo,
-               f.home_goals, f.away_goals
-        FROM fixtures f
-        JOIN competitions c ON c.id = f.competition_id AND c.season = f.season
-        JOIN teams ht ON ht.id = f.home_team_id
-        JOIN teams at ON at.id = f.away_team_id
-        WHERE f.competition_id = ? AND f.season >= ? AND f.season <= ?
-          AND f.status IN ('FT', 'AET', 'PEN')
-          AND f.home_goals IS NOT NULL AND f.away_goals IS NOT NULL
-        ORDER BY f.kickoff ASC, f.id ASC
-      `).bind(competition.id, competition.latest_season - 5, competition.latest_season).all<FixtureRow>()).results;
+      const history = await readCompletedHistory(db, {
+        competitionId: competition.id,
+        fromSeason: competition.latest_season - 5,
+        toSeason: competition.latest_season,
+      });
       if (!history.length) continue;
       const validation = backtest(history);
       evaluations.push({
@@ -50,7 +42,7 @@ export async function GET() {
 
     return Response.json({
       connected: true,
-      model: { name: 'Elo + Bayesian Poisson baseline', version: '1.0', usesFutureData: false },
+      model: { name: MODEL_NAME, version: MODEL_VERSION, usesFutureData: false },
       summary: {
         competitions: evaluations.length,
         trainingMatches: evaluations.reduce((sum, evaluation) => sum + evaluation.trainingMatches, 0),
