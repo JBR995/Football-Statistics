@@ -332,6 +332,7 @@ function CompetitionDatabase({ feed, loading }: { feed: IntelligenceFeed | null;
   const [predictionOpen, setPredictionOpen] = useState(false);
   const [historyImport, setHistoryImport] = useState<HistoricalImport | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyProgress, setHistoryProgress] = useState('');
   const loadTeam = (teamId: number) => {
     if (!feed?.competition) return;
     setTeamOpen(true); setTeamLoading(true); setTeamAnalysis(null);
@@ -345,11 +346,33 @@ function CompetitionDatabase({ feed, loading }: { feed: IntelligenceFeed | null;
     setPredictionOpen(true); setPredictionLoading(true); setPrediction(null);
     fetch(`/api/football/prediction?fixture=${fixtureId}`).then(async (response) => await response.json() as BaselinePrediction).then((data) => setPrediction(data)).catch(() => setPrediction({ connected: false, error: 'The prediction model could not be reached.' })).finally(() => setPredictionLoading(false));
   };
-  const importHistory = () => {
+  const importHistory = async () => {
     if (!feed?.competition) return;
     const seasons = Array.from({ length: 5 }, (_, index) => feed.competition!.season - 5 + index);
     setHistoryLoading(true); setHistoryImport(null);
-    fetch('/api/football/history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ league: feed.competition.id, seasons }) }).then(async (response) => await response.json() as HistoricalImport).then(setHistoryImport).catch(() => setHistoryImport({ connected: false, error: 'The historical import could not be reached.' })).finally(() => setHistoryLoading(false));
+    const importedSeasons: NonNullable<HistoricalImport['seasons']> = [];
+    try {
+      for (let index = 0; index < seasons.length; index++) {
+        const season = seasons[index];
+        setHistoryProgress(`Importing ${season}/${String(season + 1).slice(-2)} · ${index + 1} of ${seasons.length}`);
+        let result: HistoricalImport | null = null;
+        for (let attempt = 0; attempt < 4; attempt++) {
+          const response = await fetch('/api/football/history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ league: feed.competition.id, seasons: [season] }) });
+          result = await response.json() as HistoricalImport;
+          if (result.connected || !result.error?.toLowerCase().includes('too many requests')) break;
+          setHistoryProgress(`Provider limit reached · retrying ${season} shortly`);
+          await new Promise((resolve) => window.setTimeout(resolve, 20_000));
+        }
+        if (!result?.connected || !result.seasons?.[0]) throw new Error(result?.error ?? `Season ${season} could not be imported.`);
+        importedSeasons.push(result.seasons[0]);
+        if (index < seasons.length - 1) await new Promise((resolve) => window.setTimeout(resolve, 7_000));
+      }
+      setHistoryImport({ connected: true, seasons: importedSeasons, imported: importedSeasons.filter((season) => season.status === 'imported').length, records: importedSeasons.reduce((sum, season) => sum + season.records, 0) });
+    } catch (error) {
+      setHistoryImport({ connected: false, seasons: importedSeasons, records: importedSeasons.reduce((sum, season) => sum + season.records, 0), error: error instanceof Error ? error.message : 'The historical import could not be reached.' });
+    } finally {
+      setHistoryProgress(''); setHistoryLoading(false);
+    }
   };
   if (loading) return <Card className="mt-6 border-primary/12 bg-card/75"><CardContent className="flex min-h-56 items-center justify-center gap-3 text-sm text-muted-foreground"><LoaderCircle className="size-5 animate-spin text-primary" /> Building the competition database…</CardContent></Card>;
   if (!feed?.connected || !feed.summary) return <Card className="mt-6 border-amber-300/15 bg-card/75"><CardContent className="p-6"><p className="font-medium text-amber-100">Competition database unavailable</p><p className="mt-2 text-sm text-muted-foreground">{feed?.error ?? 'No stored records were returned.'}</p></CardContent></Card>;
@@ -358,7 +381,7 @@ function CompetitionDatabase({ feed, loading }: { feed: IntelligenceFeed | null;
     ['Goals', feed.summary.goals], ['Goals / match', feed.summary.averageGoals], ['Teams ranked', feed.summary.teams],
   ];
   return <><section className="mt-7">
-    <div className="mb-4 flex flex-wrap items-end justify-between gap-3"><div><p className="text-xs font-medium uppercase tracking-[.16em] text-primary">Persistent data layer</p><h2 className="mt-1 text-2xl font-semibold tracking-[-.035em]">Competition intelligence</h2><p className="mt-1 text-xs text-muted-foreground">Results, fixtures and standings calculated from stored provider records.</p></div><div className="flex flex-wrap items-center gap-2"><Badge variant="outline" className="border-primary/25 text-primary"><Database className="mr-1 size-3" /> {feed.synced ? 'Dataset imported' : 'Database current'}</Badge><Button onClick={importHistory} disabled={historyLoading} variant="outline" size="sm">{historyLoading ? <LoaderCircle className="animate-spin" /> : <Upload />} {historyLoading ? 'Importing five seasons…' : 'Import five-season history'}</Button></div></div>
+    <div className="mb-4 flex flex-wrap items-end justify-between gap-3"><div><p className="text-xs font-medium uppercase tracking-[.16em] text-primary">Persistent data layer</p><h2 className="mt-1 text-2xl font-semibold tracking-[-.035em]">Competition intelligence</h2><p className="mt-1 text-xs text-muted-foreground">Results, fixtures and standings calculated from stored provider records.</p></div><div className="flex flex-wrap items-center gap-2"><Badge variant="outline" className="border-primary/25 text-primary"><Database className="mr-1 size-3" /> {feed.synced ? 'Dataset imported' : 'Database current'}</Badge><Button onClick={importHistory} disabled={historyLoading} variant="outline" size="sm">{historyLoading ? <LoaderCircle className="animate-spin" /> : <Upload />} {historyLoading ? historyProgress || 'Preparing history…' : 'Import five-season history'}</Button></div></div>
     {historyImport && <div className={`mb-4 rounded-xl border p-4 text-sm ${historyImport.connected ? 'border-primary/15 bg-primary/[.035]' : 'border-amber-300/15 bg-amber-300/[.035]'}`}><p className="font-medium">{historyImport.connected ? `${historyImport.records?.toLocaleString()} historical fixtures are stored across ${historyImport.seasons?.length} seasons.` : 'Historical import failed'}</p><p className="mt-1 text-xs text-muted-foreground">{historyImport.connected ? 'Future forecasts now train on these earlier seasons automatically.' : historyImport.error}</p></div>}
     <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">{stats.map(([label, value]) => <Card key={String(label)} className="border-white/8 bg-card/70"><CardContent className="p-4"><p className="font-mono text-xl text-primary">{value}</p><p className="mt-1 text-[11px] text-muted-foreground">{label}</p></CardContent></Card>)}</div>
     <div className="grid gap-4 xl:grid-cols-[1.3fr_.7fr]">
