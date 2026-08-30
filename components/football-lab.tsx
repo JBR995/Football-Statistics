@@ -524,7 +524,10 @@ function ImportDashboard({ competitions }: { competitions: LiveCompetition[] }) 
     ...competition,
     group: '', providerName: competition.name, logo: null, available: true,
     coverage: { liveEvents: false, fixtureStatistics: false, playerStatistics: false, lineups: false, predictions: true, injuries: false },
-  }))).filter((competition) => competition.season !== null);
+  }))).map((competition) => ({
+    ...competition,
+    season: competition.season ?? FIXTURE_COMPETITIONS.find((fallback) => fallback.id === competition.id)?.season ?? 2026,
+  }));
   const storedBySeason = new Map((status?.seasons ?? []).map((season) => [`${season.competitionId}:${season.season}`, season]));
   const rows = availableCompetitions.map((competition) => {
     const currentSeason = competition.season ?? 2026;
