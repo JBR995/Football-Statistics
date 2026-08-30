@@ -1,5 +1,6 @@
 const API_URL = 'https://v3.football.api-sports.io/fixtures';
 const CACHE_SECONDS = 43_200;
+const RESTRICTION_CACHE_SECONDS = 300;
 
 const COMPETITIONS = new Map([
   [39, 'Premier League'],
@@ -36,7 +37,7 @@ type ApiResponse = {
   response: ApiFixture[];
 };
 
-const memoryCache = new Map<number, { expiresAt: number; body: string; status: number }>();
+const memoryCache = new Map<number, { expiresAt: number; body: string; status: number; cacheSeconds: number }>();
 
 export async function GET(request: Request) {
   const leagueId = Number(new URL(request.url).searchParams.get('league') ?? 39);
@@ -47,7 +48,7 @@ export async function GET(request: Request) {
 
   const now = Date.now();
   const cached = memoryCache.get(leagueId);
-  if (cached && cached.expiresAt > now) return jsonResponse(cached.body, cached.status, 'memory');
+  if (cached && cached.expiresAt > now) return jsonResponse(cached.body, cached.status, 'memory', cached.cacheSeconds);
 
   const apiKey = process.env.API_FOOTBALL_KEY;
   if (!apiKey) {
@@ -80,8 +81,8 @@ export async function GET(request: Request) {
         fixtures: [],
         error: 'Current-season fixtures are unavailable on this API plan. The provider reports access is limited to seasons 2022–2024.',
       });
-      memoryCache.set(leagueId, { expiresAt: now + CACHE_SECONDS * 1000, body, status: 200 });
-      return jsonResponse(body, 200, 'upstream');
+      memoryCache.set(leagueId, { expiresAt: now + RESTRICTION_CACHE_SECONDS * 1000, body, status: 200, cacheSeconds: RESTRICTION_CACHE_SECONDS });
+      return jsonResponse(body, 200, 'upstream', RESTRICTION_CACHE_SECONDS);
     }
 
     if (!Array.isArray(payload.response)) {
@@ -99,19 +100,19 @@ export async function GET(request: Request) {
       away: item.teams.away,
     }));
     const body = JSON.stringify({ connected: true, restricted: false, provider: 'API-Football', checkedAt: new Date().toISOString(), competition: { id: leagueId, name: competitionName, season }, fixtures });
-    memoryCache.set(leagueId, { expiresAt: now + CACHE_SECONDS * 1000, body, status: 200 });
+    memoryCache.set(leagueId, { expiresAt: now + CACHE_SECONDS * 1000, body, status: 200, cacheSeconds: CACHE_SECONDS });
     return jsonResponse(body, 200, 'upstream');
   } catch {
     return Response.json({ connected: false, error: 'The statistics service could not be reached.' }, { status: 502, headers: { 'Cache-Control': 'no-store' } });
   }
 }
 
-function jsonResponse(body: string, status: number, source: 'memory' | 'upstream') {
+function jsonResponse(body: string, status: number, source: 'memory' | 'upstream', cacheSeconds = CACHE_SECONDS) {
   return new Response(body, {
     status,
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': `public, s-maxage=${CACHE_SECONDS}, stale-while-revalidate=86400`,
+      'Cache-Control': `public, s-maxage=${cacheSeconds}, stale-while-revalidate=${cacheSeconds}`,
       'X-ElevenLab-Cache': source,
     },
   });
