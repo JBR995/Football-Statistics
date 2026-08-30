@@ -61,7 +61,10 @@ async function importSeason(db: D1Database, leagueId: number, season: number, co
   url.searchParams.set('league', String(leagueId));
   url.searchParams.set('season', String(season));
   url.searchParams.set('timezone', 'Europe/London');
-  const response = await fetch(url, { headers: { 'x-apisports-key': apiKey } });
+  const response = await fetch(url, {
+    cache: 'no-store',
+    headers: { 'x-apisports-key': apiKey, 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+  });
   if (!response.ok) throw new Error(`The provider returned ${response.status} for season ${season}.`);
   const payload = await response.json() as { errors: Record<string, string> | string[]; response: ApiFixture[] };
   const errors = Array.isArray(payload.errors) ? payload.errors : Object.values(payload.errors ?? {});
