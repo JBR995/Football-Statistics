@@ -86,9 +86,9 @@ export async function GET(request: Request) {
       JOIN competitions c ON c.id = f.competition_id AND c.season = f.season
       JOIN teams ht ON ht.id = f.home_team_id
       JOIN teams at ON at.id = f.away_team_id
-      WHERE f.competition_id = ? AND f.season = ? AND f.kickoff < ?
+      WHERE f.competition_id = ? AND f.season >= ? AND f.season <= ? AND f.kickoff < ?
       ORDER BY f.kickoff ASC, f.id ASC
-    `).bind(target.competition_id, target.season, target.kickoff).all<FixtureRow>()).results;
+    `).bind(target.competition_id, target.season - 5, target.season, target.kickoff).all<FixtureRow>()).results;
 
     const history = rows.filter(isCompleted);
     const prediction = modelPrediction(target, history);
@@ -183,7 +183,8 @@ function backtest(history: FixtureRow[]) {
   let brier = 0;
   let logLoss = 0;
   let matches = 0;
-  for (let index = 5; index < history.length; index++) {
+  const validationStart = Math.max(20, history.length - 100);
+  for (let index = validationStart; index < history.length; index++) {
     const target = history[index];
     const output = modelPrediction(target, history.slice(0, index));
     const probabilities = [output.probabilities.home / 100, output.probabilities.draw / 100, output.probabilities.away / 100];

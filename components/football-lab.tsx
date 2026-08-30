@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createElement, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   Activity, ArrowDown, ArrowUp, ArrowUpRight, Bot, BrainCircuit, Check,
   ChevronDown, CircleDot, Database, FileUp, Gauge, LineChart as LineIcon,
@@ -33,7 +33,7 @@ const TEAMS = {
 
 type TeamName = keyof typeof TEAMS;
 type Team = (typeof TEAMS)[TeamName];
-type View = 'Overview' | 'Match Lab' | 'Data Explorer' | 'Models';
+type View = 'Overview' | 'Live Centre' | 'Match Lab' | 'Data Explorer' | 'Models';
 type Weights = { form: number; attack: number; defence: number; context: number };
 type Prediction = ReturnType<typeof calculatePrediction>;
 type CompetitionCoverage = {
@@ -119,6 +119,7 @@ type BaselinePrediction = {
   sampleWarning?: string;
   error?: string;
 };
+type HistoricalImport = { connected: boolean; records?: number; imported?: number; seasons?: Array<{ season: number; records: number; status: string }>; error?: string };
 
 const FIXTURE_COMPETITIONS = [
   { id: 39, name: 'Premier League', season: 2026 },
@@ -237,6 +238,7 @@ export function FootballLab() {
     <Header view={view} setView={setView} connected={competitionFeed?.connected === true} feedLoading={feedLoading} />
     <div className="mx-auto max-w-[1480px] px-4 py-6 sm:px-6 lg:px-8">
       {view === 'Overview' && <Overview feed={fixtureFeed} loading={fixturesLoading} intelligence={intelligence} intelligenceLoading={intelligenceLoading} competitions={competitionFeed?.competitions ?? []} selectedLeague={selectedLeague} setSelectedLeague={setSelectedLeague} setView={setView} />}
+      {view === 'Live Centre' && <LiveCentre competitions={competitionFeed?.competitions ?? []} selectedLeague={selectedLeague} selectedSeason={selectedSeason ?? 2026} setSelectedLeague={setSelectedLeague} />}
       {view === 'Match Lab' && <MatchLab home={home} away={away} setHome={setHome} setAway={setAway} weights={weights} setWeights={setWeights} prediction={prediction} trend={trend} simulations={simulations} run={run} running={running} trained={trained} />}
       {view === 'Data Explorer' && <DataExplorer feed={competitionFeed} loading={feedLoading} />}
       {view === 'Models' && <Models weights={weights} setWeights={setWeights} simulations={simulations} run={run} running={running} trained={trained} />}
@@ -245,7 +247,7 @@ export function FootballLab() {
 }
 
 function Header({ view, setView, connected, feedLoading }: { view: View; setView: (view: View) => void; connected: boolean; feedLoading: boolean }) {
-  const views: View[] = ['Overview', 'Match Lab', 'Data Explorer', 'Models'];
+  const views: View[] = ['Overview', 'Live Centre', 'Match Lab', 'Data Explorer', 'Models'];
   return <header className="sticky top-0 z-30 border-b border-white/8 bg-background/90 backdrop-blur-xl">
     <div className="mx-auto flex h-16 max-w-[1480px] items-center gap-7 px-4 sm:px-6 lg:px-8">
       <button onClick={() => setView('Overview')} className="flex items-center gap-3 text-left" aria-label="ElevenLab overview">
@@ -292,6 +294,32 @@ function Overview({ feed, loading, intelligence, intelligenceLoading, competitio
   </>;
 }
 
+function LiveCentre({ competitions, selectedLeague, selectedSeason, setSelectedLeague }: { competitions: LiveCompetition[]; selectedLeague: number; selectedSeason: number; setSelectedLeague: (league: number) => void }) {
+  const displayCompetitions = competitions.length ? competitions : FIXTURE_COMPETITIONS;
+  const selectedCompetition = displayCompetitions.find((competition) => competition.id === selectedLeague);
+  useEffect(() => {
+    if (document.querySelector('script[data-api-sports-widgets]')) return;
+    const script = document.createElement('script');
+    script.type = 'module';
+    script.crossOrigin = 'anonymous';
+    script.src = 'https://widgets.api-sports.io/3.1.0/widgets.js';
+    script.dataset.apiSportsWidgets = 'true';
+    document.head.appendChild(script);
+  }, []);
+  const widget = (type: string, props: Record<string, string> = {}) => createElement('api-sports-widget', { 'data-type': type, ...props });
+  const context = { 'data-league': String(selectedLeague), 'data-season': String(selectedSeason) };
+  return <>
+    <Intro eyebrow="Provider-powered widgets" title="Live centre" copy="Live schedules, standings, match events, line-ups, statistics, teams and players are linked in one workspace. Select a match to open its live detail view." action={<Select value={String(selectedLeague)} onValueChange={(value) => value && setSelectedLeague(Number(value))}><SelectTrigger className="w-[230px]"><span className="truncate">{selectedCompetition?.name ?? 'Premier League'}</span></SelectTrigger><SelectContent>{displayCompetitions.map((competition) => <SelectItem key={competition.id} value={String(competition.id)}>{competition.name}</SelectItem>)}</SelectContent></Select>} />
+    <div className="mb-4 flex items-start gap-3 rounded-xl border border-primary/15 bg-primary/[.035] p-4 text-xs leading-5 text-muted-foreground"><ShieldCheck className="mt-0.5 size-4 shrink-0 text-primary" /><p>The widgets use ElevenLab’s cached server gateway, so the provider key is never embedded in the page. Live views refresh once per minute to control quota usage.</p></div>
+    <div key={`${selectedLeague}-${selectedSeason}`} className="grid gap-4 xl:grid-cols-[.9fr_1.2fr_.9fr] [&_api-sports-widget]:block [&_api-sports-widget]:min-h-[420px] [&_api-sports-widget]:overflow-hidden [&_api-sports-widget]:rounded-xl">
+      {widget('config', { 'data-key': '', 'data-url-football': '/api/football/widget/', 'data-sport': 'football', 'data-lang': 'en', 'data-theme': 'dark', 'data-show-errors': 'true', 'data-show-logos': 'true', 'data-refresh': '60', 'data-favorite': 'true', 'data-player-injuries': 'true', 'data-team-squad': 'true', 'data-team-statistics': 'true', 'data-player-statistics': 'true', 'data-game-tab': 'statistics', 'data-standings': 'true', 'data-target-game': '#widget-game', 'data-target-team': 'modal', 'data-target-player': 'modal', ...context })}
+      <Card className="border-white/8 bg-card/75"><CardHeader><CardTitle>Fixtures & live scores</CardTitle><p className="text-xs text-muted-foreground">{selectedCompetition?.name} · click a match for detail</p></CardHeader><CardContent className="p-2">{widget('games', { ...context, 'data-target-game': '#widget-game', 'data-standings': 'true' })}</CardContent></Card>
+      <Card className="border-primary/12 bg-card/75"><CardHeader><CardTitle>Match detail</CardTitle><p className="text-xs text-muted-foreground">Events, line-ups and provider statistics</p></CardHeader><CardContent id="widget-game" className="min-h-[460px] p-2"><div className="grid min-h-[420px] place-items-center rounded-xl border border-dashed border-white/10 p-8 text-center text-sm text-muted-foreground"><span><Target className="mx-auto mb-3 size-7 text-primary/60" />Select a fixture in the live schedule</span></div></CardContent></Card>
+      <Card className="border-white/8 bg-card/75"><CardHeader><CardTitle>Standings</CardTitle><p className="text-xs text-muted-foreground">Provider table and team drill-downs</p></CardHeader><CardContent id="widget-standings" className="p-2">{widget('standings', context)}</CardContent></Card>
+    </div>
+  </>;
+}
+
 function CompetitionDatabase({ feed, loading }: { feed: IntelligenceFeed | null; loading: boolean }) {
   const [teamAnalysis, setTeamAnalysis] = useState<TeamAnalysis | null>(null);
   const [teamLoading, setTeamLoading] = useState(false);
@@ -302,6 +330,8 @@ function CompetitionDatabase({ feed, loading }: { feed: IntelligenceFeed | null;
   const [prediction, setPrediction] = useState<BaselinePrediction | null>(null);
   const [predictionLoading, setPredictionLoading] = useState(false);
   const [predictionOpen, setPredictionOpen] = useState(false);
+  const [historyImport, setHistoryImport] = useState<HistoricalImport | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const loadTeam = (teamId: number) => {
     if (!feed?.competition) return;
     setTeamOpen(true); setTeamLoading(true); setTeamAnalysis(null);
@@ -315,6 +345,12 @@ function CompetitionDatabase({ feed, loading }: { feed: IntelligenceFeed | null;
     setPredictionOpen(true); setPredictionLoading(true); setPrediction(null);
     fetch(`/api/football/prediction?fixture=${fixtureId}`).then(async (response) => await response.json() as BaselinePrediction).then((data) => setPrediction(data)).catch(() => setPrediction({ connected: false, error: 'The prediction model could not be reached.' })).finally(() => setPredictionLoading(false));
   };
+  const importHistory = () => {
+    if (!feed?.competition) return;
+    const seasons = Array.from({ length: 5 }, (_, index) => feed.competition!.season - 5 + index);
+    setHistoryLoading(true); setHistoryImport(null);
+    fetch('/api/football/history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ league: feed.competition.id, seasons }) }).then(async (response) => await response.json() as HistoricalImport).then(setHistoryImport).catch(() => setHistoryImport({ connected: false, error: 'The historical import could not be reached.' })).finally(() => setHistoryLoading(false));
+  };
   if (loading) return <Card className="mt-6 border-primary/12 bg-card/75"><CardContent className="flex min-h-56 items-center justify-center gap-3 text-sm text-muted-foreground"><LoaderCircle className="size-5 animate-spin text-primary" /> Building the competition database…</CardContent></Card>;
   if (!feed?.connected || !feed.summary) return <Card className="mt-6 border-amber-300/15 bg-card/75"><CardContent className="p-6"><p className="font-medium text-amber-100">Competition database unavailable</p><p className="mt-2 text-sm text-muted-foreground">{feed?.error ?? 'No stored records were returned.'}</p></CardContent></Card>;
   const stats = [
@@ -322,7 +358,8 @@ function CompetitionDatabase({ feed, loading }: { feed: IntelligenceFeed | null;
     ['Goals', feed.summary.goals], ['Goals / match', feed.summary.averageGoals], ['Teams ranked', feed.summary.teams],
   ];
   return <><section className="mt-7">
-    <div className="mb-4 flex flex-wrap items-end justify-between gap-3"><div><p className="text-xs font-medium uppercase tracking-[.16em] text-primary">Persistent data layer</p><h2 className="mt-1 text-2xl font-semibold tracking-[-.035em]">Competition intelligence</h2><p className="mt-1 text-xs text-muted-foreground">Results, fixtures and standings calculated from stored provider records.</p></div><Badge variant="outline" className="border-primary/25 text-primary"><Database className="mr-1 size-3" /> {feed.synced ? 'Dataset imported' : 'Database current'}</Badge></div>
+    <div className="mb-4 flex flex-wrap items-end justify-between gap-3"><div><p className="text-xs font-medium uppercase tracking-[.16em] text-primary">Persistent data layer</p><h2 className="mt-1 text-2xl font-semibold tracking-[-.035em]">Competition intelligence</h2><p className="mt-1 text-xs text-muted-foreground">Results, fixtures and standings calculated from stored provider records.</p></div><div className="flex flex-wrap items-center gap-2"><Badge variant="outline" className="border-primary/25 text-primary"><Database className="mr-1 size-3" /> {feed.synced ? 'Dataset imported' : 'Database current'}</Badge><Button onClick={importHistory} disabled={historyLoading} variant="outline" size="sm">{historyLoading ? <LoaderCircle className="animate-spin" /> : <Upload />} {historyLoading ? 'Importing five seasons…' : 'Import five-season history'}</Button></div></div>
+    {historyImport && <div className={`mb-4 rounded-xl border p-4 text-sm ${historyImport.connected ? 'border-primary/15 bg-primary/[.035]' : 'border-amber-300/15 bg-amber-300/[.035]'}`}><p className="font-medium">{historyImport.connected ? `${historyImport.records?.toLocaleString()} historical fixtures are stored across ${historyImport.seasons?.length} seasons.` : 'Historical import failed'}</p><p className="mt-1 text-xs text-muted-foreground">{historyImport.connected ? 'Future forecasts now train on these earlier seasons automatically.' : historyImport.error}</p></div>}
     <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">{stats.map(([label, value]) => <Card key={String(label)} className="border-white/8 bg-card/70"><CardContent className="p-4"><p className="font-mono text-xl text-primary">{value}</p><p className="mt-1 text-[11px] text-muted-foreground">{label}</p></CardContent></Card>)}</div>
     <div className="grid gap-4 xl:grid-cols-[1.3fr_.7fr]">
       <Card className="border-white/8 bg-card/75"><CardHeader className="flex-row items-center justify-between"><div><CardTitle>Calculated table</CardTitle><p className="mt-1 text-xs text-muted-foreground">Select a team for form and split analysis</p></div><Badge variant="outline">{feed.competition?.season}/{String((feed.competition?.season ?? 0) + 1).slice(-2)}</Badge></CardHeader><CardContent className="overflow-x-auto"><table className="w-full min-w-[620px] text-sm"><thead className="border-y border-white/8 text-[10px] uppercase tracking-[.12em] text-muted-foreground"><tr>{['#', 'Team', 'P', 'W', 'D', 'L', 'GF', 'GA', 'GD', 'Pts'].map((head) => <th key={head} className={`px-2 py-3 font-medium ${head === 'Team' ? 'text-left' : 'text-right'}`}>{head}</th>)}</tr></thead><tbody>{feed.standings?.map((team) => <tr key={team.id} className="border-b border-white/6"><td className="px-2 py-3 text-right font-mono text-muted-foreground">{team.position}</td><td className="px-2 py-3"><button onClick={() => loadTeam(team.id)} className="flex items-center gap-2 text-left hover:text-primary">{team.logo && <img src={team.logo} alt="" className="size-5 object-contain" />}<span className="font-medium">{team.name}</span></button></td>{[team.played, team.won, team.drawn, team.lost, team.gf, team.ga, team.gd, team.points].map((value, index) => <td key={index} className={`px-2 text-right font-mono ${index === 7 ? 'font-semibold text-primary' : ''}`}>{value}</td>)}</tr>)}</tbody></table></CardContent></Card>
