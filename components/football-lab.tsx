@@ -84,7 +84,7 @@ type IntelligenceFeed = {
 };
 type TeamAnalysis = { connected: boolean; team?: { id: number; name: string; logo: string | null }; season?: number; overall?: TeamSplit; home?: TeamSplit; away?: TeamSplit; form?: Array<{ id: number; kickoff: string; opponent: string; location: string; gf: number; ga: number; result: string }>; next?: { id: number; kickoff: string; opponent: string; location: string; venue: string | null } | null; error?: string };
 type TeamSplit = { played: number; won: number; drawn: number; lost: number; gf: number; ga: number; cleanSheets: number; btts: number; over25: number };
-type MatchAnalysis = { connected: boolean; match?: StoredFixture & { round: string | null }; form?: { home: Array<{ opponent: string; gf: number; ga: number; result: string }>; away: Array<{ opponent: string; gf: number; ga: number; result: string }> }; h2h?: Array<{ id: number; home_name: string; away_name: string; home_goals: number; away_goals: number }>; statistics?: Array<{ team: { id: number; name: string; logo: string | null }; statistics: Array<{ type: string; value: string | number | null }> }>; error?: string };
+type MatchAnalysis = { connected: boolean; match?: StoredFixture & { round: string | null }; form?: { home: Array<{ opponent: string; gf: number; ga: number; result: string }>; away: Array<{ opponent: string; gf: number; ga: number; result: string }> }; h2h?: Array<{ id: number; home_name: string; away_name: string; home_goals: number; away_goals: number }>; statistics?: Array<{ team: { id: number; name?: string; logo?: string | null }; statistics: Array<{ type: string; value: string | number | null }> }>; statisticsSource?: 'stored' | 'provider' | null; lineups?: Array<{ teamId: number; formation: string | null; coach: string | null; starters: Array<{ name: string; number: number | null; position: string | null }>; substitutes: Array<{ name: string }> }>; odds?: Array<{ bookmakerId: number; bookmaker: string; prices: { home: number | null; draw: number | null; away: number | null; over25: number | null; under25: number | null; bttsYes: number | null; bttsNo: number | null } }>; market?: { bookmakers: number; overround: number; probabilities: { home: number; draw: number; away: number } } | null; error?: string };
 type BaselinePrediction = {
   connected: boolean;
   fixture?: { id: number; competition: string; season: number; kickoff: string; round: string | null; venue: string | null; home: StoredFixture['home']; away: StoredFixture['away'] };
@@ -144,6 +144,18 @@ const FIXTURE_COMPETITIONS = [
 ] as const;
 const EMPTY_FIXTURES: StoredFixture[] = [];
 
+type DetailCoverageFeed = {
+  connected: boolean;
+  summary?: {
+    seasons: number;
+    fixtures: number;
+    completed: number;
+    statistics: { stored: number; of: number };
+    lineups: { stored: number; of: number };
+    odds: { stored: number; of: number };
+  };
+  error?: string;
+};
 type ForecastRecordFeed = {
   connected: boolean;
   model?: { name: string; version: string };
@@ -414,7 +426,9 @@ function MatchAnalysisDialog({ open, onOpenChange, data, loading }: { open: bool
   const match = data?.match;
   const statTypes = ['Shots on Goal', 'Ball Possession', 'Total passes', 'Passes accurate', 'Corner Kicks', 'Fouls', 'Yellow Cards'];
   const stat = (teamIndex: number, type: string) => data?.statistics?.[teamIndex]?.statistics.find((item) => item.type === type)?.value ?? '—';
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-w-3xl border-primary/15 bg-[#111a24]"><DialogHeader><DialogTitle>{match ? `${match.home.name} ${match.score.home}–${match.score.away} ${match.away.name}` : 'Match analysis'}</DialogTitle><DialogDescription>{match ? `${formatKickoff(match.kickoff)} · ${match.venue ?? match.round ?? ''}` : 'Loading stored match evidence.'}</DialogDescription></DialogHeader>{loading ? <div className="flex min-h-52 items-center justify-center"><LoaderCircle className="animate-spin text-primary" /></div> : !data?.connected || !match ? <p className="text-sm text-amber-100">{data?.error}</p> : <div className="grid gap-5 md:grid-cols-2"><div><p className="mb-3 text-xs font-semibold uppercase tracking-[.14em] text-muted-foreground">Recent form before kickoff</p>{(['home', 'away'] as const).map((side) => <div key={side} className="mb-4 rounded-xl border border-white/8 p-3"><p className="mb-2 font-medium">{match[side].name}</p><div className="flex flex-wrap gap-2">{data.form?.[side].map((item, index) => <Badge key={index} variant="outline" className={item.result === 'W' ? 'text-primary' : item.result === 'D' ? 'text-amber-200' : 'text-red-200'}>{item.result} {item.gf}–{item.ga} {item.opponent}</Badge>)}</div></div>)}</div><div><p className="mb-3 text-xs font-semibold uppercase tracking-[.14em] text-muted-foreground">Provider match statistics</p><div className="rounded-xl border border-white/8">{statTypes.map((type) => <div key={type} className="grid grid-cols-[1fr_1.6fr_1fr] border-b border-white/6 px-3 py-2 text-sm last:border-0"><span className="text-left font-mono text-primary">{stat(0, type)}</span><span className="text-center text-xs text-muted-foreground">{type}</span><span className="text-right font-mono text-sky-300">{stat(1, type)}</span></div>)}</div>{!data.statistics?.length && <p className="mt-2 text-[11px] text-muted-foreground">The provider has not supplied match statistics for this fixture.</p>}</div></div>}</DialogContent></Dialog>;
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-w-3xl border-primary/15 bg-[#111a24]"><DialogHeader><DialogTitle>{match ? `${match.home.name} ${match.score.home}–${match.score.away} ${match.away.name}` : 'Match analysis'}</DialogTitle><DialogDescription>{match ? `${formatKickoff(match.kickoff)} · ${match.venue ?? match.round ?? ''}` : 'Loading stored match evidence.'}</DialogDescription></DialogHeader>{loading ? <div className="flex min-h-52 items-center justify-center"><LoaderCircle className="animate-spin text-primary" /></div> : !data?.connected || !match ? <p className="text-sm text-amber-100">{data?.error}</p> : <div className="grid gap-5 md:grid-cols-2"><div><p className="mb-3 text-xs font-semibold uppercase tracking-[.14em] text-muted-foreground">Recent form before kickoff</p>{(['home', 'away'] as const).map((side) => <div key={side} className="mb-4 rounded-xl border border-white/8 p-3"><p className="mb-2 font-medium">{match[side].name}</p><div className="flex flex-wrap gap-2">{data.form?.[side].map((item, index) => <Badge key={index} variant="outline" className={item.result === 'W' ? 'text-primary' : item.result === 'D' ? 'text-amber-200' : 'text-red-200'}>{item.result} {item.gf}–{item.ga} {item.opponent}</Badge>)}</div></div>)}</div><div><div className="mb-3 flex items-center justify-between gap-2"><p className="text-xs font-semibold uppercase tracking-[.14em] text-muted-foreground">Match statistics</p>{data.statisticsSource && <Badge variant="outline" className={data.statisticsSource === 'stored' ? 'border-primary/25 text-primary' : 'text-amber-200'}>{data.statisticsSource === 'stored' ? 'From the database' : 'Live from provider'}</Badge>}</div><div className="rounded-xl border border-white/8">{statTypes.map((type) => <div key={type} className="grid grid-cols-[1fr_1.6fr_1fr] border-b border-white/6 px-3 py-2 text-sm last:border-0"><span className="text-left font-mono text-primary">{stat(0, type)}</span><span className="text-center text-xs text-muted-foreground">{type}</span><span className="text-right font-mono text-sky-300">{stat(1, type)}</span></div>)}</div>{!data.statistics?.length && <p className="mt-2 text-[11px] text-muted-foreground">No match statistics are stored for this fixture, and the provider supplied none.</p>}
+      {Boolean(data.lineups?.length) && <div className="mt-4"><p className="mb-2 text-xs font-semibold uppercase tracking-[.14em] text-muted-foreground">Line-ups</p><div className="grid grid-cols-2 gap-2">{data.lineups?.map((lineup) => <div key={lineup.teamId} className="rounded-xl border border-white/8 p-3"><p className="font-mono text-sm text-primary">{lineup.formation ?? '—'}</p><p className="mt-0.5 text-[10px] text-muted-foreground">{lineup.coach ?? 'Coach not recorded'} · {lineup.starters.length} started, {lineup.substitutes.length} on the bench</p></div>)}</div></div>}
+      {data.market && <div className="mt-4"><p className="mb-2 text-xs font-semibold uppercase tracking-[.14em] text-muted-foreground">Market price</p><div className="rounded-xl border border-white/8 p-3"><div className="grid grid-cols-3 gap-2 text-center">{([['Home', data.market.probabilities.home], ['Draw', data.market.probabilities.draw], ['Away', data.market.probabilities.away]] as const).map(([label, value]) => <div key={label}><p className="font-mono text-lg text-primary">{value}%</p><p className="text-[10px] text-muted-foreground">{label}</p></div>)}</div><p className="mt-2 text-[10px] leading-4 text-muted-foreground">Averaged across {data.market.bookmakers} bookmaker{data.market.bookmakers === 1 ? '' : 's'} with the {Math.round((data.market.overround - 1) * 1000) / 10}% margin divided out. This is the benchmark the model has to beat, not a second opinion.</p></div></div>}</div></div>}</DialogContent></Dialog>;
 }
 
 function PredictionDialog({ open, onOpenChange, data, loading }: { open: boolean; onOpenChange: (open: boolean) => void; data: BaselinePrediction | null; loading: boolean }) {
@@ -631,6 +645,13 @@ function ImportDashboard({ competitions }: { competitions: LiveCompetition[] }) 
 }
 
 function DataExplorer({ feed, loading }: { feed: CompetitionFeed | null; loading: boolean }) {
+  const [coverage, setCoverage] = useState<DetailCoverageFeed | null>(null);
+  useEffect(() => {
+    fetch('/api/football/history/coverage', { cache: 'no-store' })
+      .then(async (response) => await response.json() as DetailCoverageFeed)
+      .then(setCoverage)
+      .catch(() => setCoverage({ connected: false, error: 'Stored coverage could not be read.' }));
+  }, []);
   const summary = feed?.summary;
   const coverageFields: Array<{ key: keyof CompetitionCoverage; label: string }> = [
     { key: 'liveEvents', label: 'Live' },
@@ -677,15 +698,63 @@ function DataExplorer({ feed, loading }: { feed: CompetitionFeed | null; loading
         </>}
       </CardContent>
     </Card>
-    <Card className="border-white/8 bg-card/75"><CardHeader><CardTitle>Historical storage readiness</CardTitle><p className="text-xs text-muted-foreground">What the research database can query today versus what remains available only in Live Centre.</p></CardHeader><CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{[
-      ['Fixtures, results and scores', 'Stored', 'Competition, season, kickoff, venue, teams and final scores are retained.'],
-      ['Standings and team form', 'Calculated', 'Tables, home/away splits and last-six form are derived from stored results.'],
-      ['Baseline predictions', 'Calculated', 'Elo, Bayesian attack/defence and Poisson outputs use stored pre-kickoff evidence.'],
-      ['Shots, possession and passing', 'Live only', 'Available in provider match views but not yet retained across seasons.'],
-      ['Line-ups, formations and events', 'Live only', 'Visible when supplied by the provider; historical storage is the next data-layer step.'],
-      ['Injuries, suspensions and odds', 'Live only', 'Not yet available as a durable model feature or prediction snapshot.'],
-    ].map(([label, state, copy]) => <div key={label} className="rounded-xl border border-white/7 bg-white/[.02] p-4"><div className="mb-3 flex items-center justify-between gap-3"><p className="font-medium">{label}</p><Badge variant="outline" className={state === 'Stored' || state === 'Calculated' ? 'border-primary/25 text-primary' : 'text-amber-200'}>{state}</Badge></div><p className="text-xs leading-5 text-muted-foreground">{copy}</p></div>)}</CardContent></Card>
+    <Card className="border-white/8 bg-card/75"><CardHeader><CardTitle>Historical storage readiness</CardTitle><p className="text-xs text-muted-foreground">What the research database can query today versus what remains available only in Live Centre. Counts are read from the database, not assumed.</p></CardHeader><CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{readinessRows(coverage).map((row) => <div key={row.label} className="rounded-xl border border-white/7 bg-white/[.02] p-4"><div className="mb-3 flex items-center justify-between gap-3"><p className="font-medium">{row.label}</p><Badge variant="outline" className={row.state === 'Live only' || row.state === 'Not stored' ? 'text-amber-200' : 'border-primary/25 text-primary'}>{row.state}</Badge></div><p className="text-xs leading-5 text-muted-foreground">{row.copy}</p></div>)}</CardContent></Card>
   </>;
+}
+
+// The readiness panel reports the database. A class with nothing stored says
+// so plainly rather than describing an intention.
+function readinessRows(coverage: DetailCoverageFeed | null) {
+  const summary = coverage?.summary;
+  const share = (stored: number | undefined, of: number | undefined) =>
+    stored && of ? `${stored.toLocaleString()} of ${of.toLocaleString()} matches` : 'nothing stored yet';
+  const stored = (count: number | undefined) => (count ?? 0) > 0;
+
+  return [
+    {
+      label: 'Fixtures, results and scores',
+      state: stored(summary?.fixtures) ? 'Stored' : 'Not stored',
+      copy: summary
+        ? `${summary.fixtures.toLocaleString()} fixtures across ${summary.seasons} competition-seasons, ${summary.completed.toLocaleString()} of them played.`
+        : 'Competition, season, kickoff, venue, teams and final scores are retained.',
+    },
+    {
+      label: 'Standings and team form',
+      state: 'Calculated',
+      copy: 'Tables, home/away splits and last-six form are derived from stored results.',
+    },
+    {
+      label: 'Baseline predictions',
+      state: 'Calculated',
+      copy: 'Elo, Bayesian attack/defence and Poisson outputs use stored pre-kickoff evidence. Forecasts recorded before kickoff are scored in Models.',
+    },
+    {
+      label: 'Shots, possession and passing',
+      state: stored(summary?.statistics.stored) ? 'Stored' : 'Live only',
+      copy: stored(summary?.statistics.stored)
+        ? `Shot, possession, passing and card counts for ${share(summary?.statistics.stored, summary?.statistics.of)}, with expected goals where the provider supplies them.`
+        : 'Available in provider match views. Run the match-detail importer to retain them across seasons.',
+    },
+    {
+      label: 'Line-ups and formations',
+      state: stored(summary?.lineups.stored) ? 'Stored' : 'Live only',
+      copy: stored(summary?.lineups.stored)
+        ? `Starting elevens, substitutes, formation and coach for ${share(summary?.lineups.stored, summary?.lineups.of)}. No model reads them yet.`
+        : 'Visible when supplied by the provider; run the match-detail importer to retain them.',
+    },
+    {
+      label: 'Bookmaker odds',
+      state: stored(summary?.odds.stored) ? 'Stored' : 'Live only',
+      copy: stored(summary?.odds.stored)
+        ? `1X2, over/under 2.5 and both-teams-to-score prices for ${share(summary?.odds.stored, summary?.odds.of)}, shown with the margin divided out.`
+        : 'Not yet retained. Odds are the benchmark the model should be judged against, so this is the gap that matters most.',
+    },
+    {
+      label: 'Injuries, suspensions and events',
+      state: 'Live only',
+      copy: 'Not stored. Injuries are reported as a current state rather than a historical record, so a match-time snapshot has to be captured before kickoff to be usable.',
+    },
+  ];
 }
 
 function Models() {

@@ -40,3 +40,6 @@ next-env.d.ts
 
 # typescript incremental build
 tsconfig.tsbuildinfo
+
+# local importer quota cache
+scripts/.match-detail-cache.json

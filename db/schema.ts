@@ -67,3 +67,58 @@ export const predictionSnapshots = sqliteTable('prediction_snapshots', {
   index('idx_prediction_snapshots_fixture').on(table.fixtureId, table.modelVersion, table.id),
   index('idx_prediction_snapshots_kickoff').on(table.kickoff),
 ]);
+
+export const fixtureStatistics = sqliteTable('fixture_statistics', {
+  fixtureId: integer('fixture_id').notNull(),
+  teamId: integer('team_id').notNull(),
+  shotsTotal: integer('shots_total'),
+  shotsOn: integer('shots_on'),
+  shotsOff: integer('shots_off'),
+  shotsBlocked: integer('shots_blocked'),
+  shotsInsideBox: integer('shots_inside_box'),
+  shotsOutsideBox: integer('shots_outside_box'),
+  fouls: integer('fouls'),
+  corners: integer('corners'),
+  offsides: integer('offsides'),
+  possession: real('possession'),
+  yellowCards: integer('yellow_cards'),
+  redCards: integer('red_cards'),
+  saves: integer('saves'),
+  passesTotal: integer('passes_total'),
+  passesAccurate: integer('passes_accurate'),
+  expectedGoals: real('expected_goals'),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.fixtureId, table.teamId] }),
+  index('idx_fixture_statistics_fixture').on(table.fixtureId),
+]);
+
+export const fixtureLineups = sqliteTable('fixture_lineups', {
+  fixtureId: integer('fixture_id').notNull(),
+  teamId: integer('team_id').notNull(),
+  formation: text('formation'),
+  coach: text('coach'),
+  starters: text('starters').notNull(),
+  substitutes: text('substitutes').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.fixtureId, table.teamId] }),
+  index('idx_fixture_lineups_fixture').on(table.fixtureId),
+]);
+
+export const fixtureOdds = sqliteTable('fixture_odds', {
+  fixtureId: integer('fixture_id').notNull(),
+  bookmakerId: integer('bookmaker_id').notNull(),
+  bookmaker: text('bookmaker').notNull(),
+  homeOdds: real('home_odds'),
+  drawOdds: real('draw_odds'),
+  awayOdds: real('away_odds'),
+  over25Odds: real('over25_odds'),
+  under25Odds: real('under25_odds'),
+  bttsYesOdds: real('btts_yes_odds'),
+  bttsNoOdds: real('btts_no_odds'),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.fixtureId, table.bookmakerId] }),
+  index('idx_fixture_odds_fixture').on(table.fixtureId),
+]);
