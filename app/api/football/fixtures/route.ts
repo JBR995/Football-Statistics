@@ -37,17 +37,23 @@ type ApiResponse = {
   response: ApiFixture[];
 };
 
-const memoryCache = new Map<number, { expiresAt: number; body: string; status: number; cacheSeconds: number }>();
+const memoryCache = new Map<string, { expiresAt: number; body: string; status: number; cacheSeconds: number }>();
 
 export async function GET(request: Request) {
-  const leagueId = Number(new URL(request.url).searchParams.get('league') ?? 39);
+  const searchParams = new URL(request.url).searchParams;
+  const leagueId = Number(searchParams.get('league') ?? 39);
   const competitionName = COMPETITIONS.get(leagueId);
   if (!competitionName) {
     return Response.json({ connected: false, error: 'That competition is not enabled.' }, { status: 400 });
   }
 
+  const today = new Date();
+  const fallbackSeason = today.getUTCMonth() >= 6 ? today.getUTCFullYear() : today.getUTCFullYear() - 1;
+  const requestedSeason = Number(searchParams.get('season'));
+  const season = Number.isInteger(requestedSeason) && requestedSeason >= 2000 && requestedSeason <= 2100 ? requestedSeason : fallbackSeason;
+  const cacheKey = `${leagueId}:${season}`;
   const now = Date.now();
-  const cached = memoryCache.get(leagueId);
+  const cached = memoryCache.get(cacheKey);
   if (cached && cached.expiresAt > now) return jsonResponse(cached.body, cached.status, 'memory', cached.cacheSeconds);
 
   const apiKey = process.env.API_FOOTBALL_KEY;
@@ -55,8 +61,6 @@ export async function GET(request: Request) {
     return Response.json({ connected: false, error: 'The football data source is not configured.' }, { status: 503, headers: { 'Cache-Control': 'no-store' } });
   }
 
-  const today = new Date();
-  const season = today.getUTCMonth() >= 6 ? today.getUTCFullYear() : today.getUTCFullYear() - 1;
   const url = new URL(API_URL);
   url.searchParams.set('league', String(leagueId));
   url.searchParams.set('season', String(season));
@@ -81,7 +85,7 @@ export async function GET(request: Request) {
         fixtures: [],
         error: 'Current-season fixtures are unavailable on this API plan. The provider reports access is limited to seasons 2022–2024.',
       });
-      memoryCache.set(leagueId, { expiresAt: now + RESTRICTION_CACHE_SECONDS * 1000, body, status: 200, cacheSeconds: RESTRICTION_CACHE_SECONDS });
+      memoryCache.set(cacheKey, { expiresAt: now + RESTRICTION_CACHE_SECONDS * 1000, body, status: 200, cacheSeconds: RESTRICTION_CACHE_SECONDS });
       return jsonResponse(body, 200, 'upstream', RESTRICTION_CACHE_SECONDS);
     }
 
@@ -100,7 +104,7 @@ export async function GET(request: Request) {
       away: item.teams.away,
     }));
     const body = JSON.stringify({ connected: true, restricted: false, provider: 'API-Football', checkedAt: new Date().toISOString(), competition: { id: leagueId, name: competitionName, season }, fixtures });
-    memoryCache.set(leagueId, { expiresAt: now + CACHE_SECONDS * 1000, body, status: 200, cacheSeconds: CACHE_SECONDS });
+    memoryCache.set(cacheKey, { expiresAt: now + CACHE_SECONDS * 1000, body, status: 200, cacheSeconds: CACHE_SECONDS });
     return jsonResponse(body, 200, 'upstream');
   } catch {
     return Response.json({ connected: false, error: 'The statistics service could not be reached.' }, { status: 502, headers: { 'Cache-Control': 'no-store' } });
