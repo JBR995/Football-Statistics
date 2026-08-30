@@ -32,7 +32,8 @@ export async function POST(request: Request) {
     const results: Array<{ season: number; records: number; status: 'imported' | 'already-stored' }> = [];
     for (const season of seasons) {
       const existing = await db.prepare('SELECT COUNT(*) AS count FROM fixtures WHERE competition_id = ? AND season = ?').bind(leagueId, season).first<{ count: number }>();
-      if (existing?.count) {
+      const completed = await db.prepare(`SELECT id FROM sync_runs WHERE competition_id = ? AND season = ? AND status = 'complete' ORDER BY id DESC LIMIT 1`).bind(leagueId, season).first<{ id: number }>();
+      if (existing?.count && completed) {
         results.push({ season, records: existing.count, status: 'already-stored' });
         continue;
       }
@@ -57,32 +58,40 @@ async function importSeason(db: D1Database, leagueId: number, season: number, co
   const apiKey = process.env.API_FOOTBALL_KEY;
   if (!apiKey) throw new Error('The football data source is not configured.');
   const startedAt = new Date().toISOString();
-  const url = new URL(API_URL);
-  url.searchParams.set('league', String(leagueId));
-  url.searchParams.set('season', String(season));
-  url.searchParams.set('timezone', 'Europe/London');
-  const response = await fetch(url, {
-    cache: 'no-store',
-    headers: { 'x-apisports-key': apiKey, 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
-  });
-  if (!response.ok) throw new Error(`The provider returned ${response.status} for season ${season}.`);
-  const payload = await response.json() as { errors: Record<string, string> | string[]; response: ApiFixture[] };
-  const errors = Array.isArray(payload.errors) ? payload.errors : Object.values(payload.errors ?? {});
-  if (errors.length) throw new Error(`Season ${season}: ${errors[0]}`);
-  if (!payload.response?.length) throw new Error(`No records were returned for season ${season}.`);
+  try {
+    const url = new URL(API_URL);
+    url.searchParams.set('league', String(leagueId));
+    url.searchParams.set('season', String(season));
+    url.searchParams.set('timezone', 'Europe/London');
+    const response = await fetch(url, {
+      cache: 'no-store',
+      headers: { 'x-apisports-key': apiKey, 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+    });
+    if (!response.ok) throw new Error(`The provider returned ${response.status} for season ${season}.`);
+    const payload = await response.json() as { errors: Record<string, string> | string[]; response: ApiFixture[] };
+    const errors = Array.isArray(payload.errors) ? payload.errors : Object.values(payload.errors ?? {});
+    if (errors.length) throw new Error(`Season ${season}: ${errors[0]}`);
+    if (!payload.response?.length) throw new Error(`No records were returned for season ${season}.`);
 
-  const updatedAt = new Date().toISOString();
-  const teams = new Map<number, ApiTeam>();
-  for (const item of payload.response) {
-    teams.set(item.teams.home.id, item.teams.home);
-    teams.set(item.teams.away.id, item.teams.away);
+    const updatedAt = new Date().toISOString();
+    const teams = new Map<number, ApiTeam>();
+    for (const item of payload.response) {
+      teams.set(item.teams.home.id, item.teams.home);
+      teams.set(item.teams.away.id, item.teams.away);
+    }
+    const statements = [
+      db.prepare(`INSERT INTO competitions (id, season, name, country, logo, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id, season) DO UPDATE SET name=excluded.name, country=excluded.country, logo=excluded.logo, updated_at=excluded.updated_at`).bind(leagueId, season, competition.name, competition.country, payload.response[0].league.logo, updatedAt),
+      ...Array.from(teams.values()).map((team) => db.prepare(`INSERT INTO teams (id, name, logo, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, logo=excluded.logo, updated_at=excluded.updated_at`).bind(team.id, team.name, team.logo, updatedAt)),
+      ...payload.response.map((item) => db.prepare(`INSERT INTO fixtures (id, competition_id, season, round, kickoff, status, venue, home_team_id, away_team_id, home_goals, away_goals, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET round=excluded.round, kickoff=excluded.kickoff, status=excluded.status, venue=excluded.venue, home_goals=excluded.home_goals, away_goals=excluded.away_goals, updated_at=excluded.updated_at`).bind(item.fixture.id, leagueId, season, item.league.round, item.fixture.date, item.fixture.status.short, item.fixture.venue.name, item.teams.home.id, item.teams.away.id, item.goals.home, item.goals.away, updatedAt)),
+    ];
+    for (let index = 0; index < statements.length; index += 75) await db.batch(statements.slice(index, index + 75));
+    await db.prepare(`INSERT INTO sync_runs (competition_id, season, status, records, started_at, finished_at) VALUES (?, ?, 'complete', ?, ?, ?)`).bind(leagueId, season, payload.response.length, startedAt, updatedAt).run();
+    return payload.response.length;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Historical data could not be imported.';
+    try {
+      await db.prepare(`INSERT INTO sync_runs (competition_id, season, status, records, error, started_at, finished_at) VALUES (?, ?, 'failed', 0, ?, ?, ?)`).bind(leagueId, season, message, startedAt, new Date().toISOString()).run();
+    } catch { /* Preserve the provider error when status logging is unavailable. */ }
+    throw error;
   }
-  const statements = [
-    db.prepare(`INSERT INTO competitions (id, season, name, country, logo, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id, season) DO UPDATE SET name=excluded.name, country=excluded.country, logo=excluded.logo, updated_at=excluded.updated_at`).bind(leagueId, season, competition.name, competition.country, payload.response[0].league.logo, updatedAt),
-    ...Array.from(teams.values()).map((team) => db.prepare(`INSERT INTO teams (id, name, logo, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, logo=excluded.logo, updated_at=excluded.updated_at`).bind(team.id, team.name, team.logo, updatedAt)),
-    ...payload.response.map((item) => db.prepare(`INSERT INTO fixtures (id, competition_id, season, round, kickoff, status, venue, home_team_id, away_team_id, home_goals, away_goals, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET round=excluded.round, kickoff=excluded.kickoff, status=excluded.status, venue=excluded.venue, home_goals=excluded.home_goals, away_goals=excluded.away_goals, updated_at=excluded.updated_at`).bind(item.fixture.id, leagueId, season, item.league.round, item.fixture.date, item.fixture.status.short, item.fixture.venue.name, item.teams.home.id, item.teams.away.id, item.goals.home, item.goals.away, updatedAt)),
-  ];
-  for (let index = 0; index < statements.length; index += 75) await db.batch(statements.slice(index, index + 75));
-  await db.prepare(`INSERT INTO sync_runs (competition_id, season, status, records, started_at, finished_at) VALUES (?, ?, 'complete', ?, ?, ?)`).bind(leagueId, season, payload.response.length, startedAt, updatedAt).run();
-  return payload.response.length;
 }

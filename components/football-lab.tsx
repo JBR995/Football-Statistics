@@ -33,7 +33,7 @@ const TEAMS = {
 
 type TeamName = keyof typeof TEAMS;
 type Team = (typeof TEAMS)[TeamName];
-type View = 'Overview' | 'Live Centre' | 'Match Lab' | 'Data Explorer' | 'Models';
+type View = 'Overview' | 'Live Centre' | 'Match Lab' | 'Imports' | 'Data Explorer' | 'Models';
 type Weights = { form: number; attack: number; defence: number; context: number };
 type Prediction = ReturnType<typeof calculatePrediction>;
 type CompetitionCoverage = {
@@ -120,6 +120,24 @@ type BaselinePrediction = {
   error?: string;
 };
 type HistoricalImport = { connected: boolean; records?: number; imported?: number; seasons?: Array<{ season: number; records: number; status: string }>; error?: string };
+type ImportSeasonStatus = {
+  competitionId: number;
+  season: number;
+  name: string;
+  country: string | null;
+  logo: string | null;
+  records: number;
+  lastUpdatedAt: string;
+  sync: { status: string; records: number; error: string | null; startedAt: string; finishedAt: string | null } | null;
+};
+type ImportStatusFeed = {
+  connected: boolean;
+  seasons?: ImportSeasonStatus[];
+  quota?: { current: number; limit: number; remaining: number; plan: string | null; active: boolean | null } | null;
+  summary?: { records: number; storedSeasons: number; completedSeasons: number; failedSeasons: number };
+  checkedAt?: string;
+  error?: string;
+};
 
 const FIXTURE_COMPETITIONS = [
   { id: 39, name: 'Premier League', season: 2026 },
@@ -240,6 +258,7 @@ export function FootballLab() {
       {view === 'Overview' && <Overview feed={fixtureFeed} loading={fixturesLoading} intelligence={intelligence} intelligenceLoading={intelligenceLoading} competitions={competitionFeed?.competitions ?? []} selectedLeague={selectedLeague} setSelectedLeague={setSelectedLeague} setView={setView} />}
       {view === 'Live Centre' && <LiveCentre competitions={competitionFeed?.competitions ?? []} selectedLeague={selectedLeague} selectedSeason={selectedSeason ?? 2026} setSelectedLeague={setSelectedLeague} />}
       {view === 'Match Lab' && <MatchLab home={home} away={away} setHome={setHome} setAway={setAway} weights={weights} setWeights={setWeights} prediction={prediction} trend={trend} simulations={simulations} run={run} running={running} trained={trained} />}
+      {view === 'Imports' && <ImportDashboard competitions={competitionFeed?.competitions ?? []} />}
       {view === 'Data Explorer' && <DataExplorer feed={competitionFeed} loading={feedLoading} />}
       {view === 'Models' && <Models weights={weights} setWeights={setWeights} simulations={simulations} run={run} running={running} trained={trained} />}
     </div>
@@ -247,7 +266,7 @@ export function FootballLab() {
 }
 
 function Header({ view, setView, connected, feedLoading }: { view: View; setView: (view: View) => void; connected: boolean; feedLoading: boolean }) {
-  const views: View[] = ['Overview', 'Live Centre', 'Match Lab', 'Data Explorer', 'Models'];
+  const views: View[] = ['Overview', 'Live Centre', 'Match Lab', 'Imports', 'Data Explorer', 'Models'];
   return <header className="sticky top-0 z-30 border-b border-white/8 bg-background/90 backdrop-blur-xl">
     <div className="mx-auto flex h-16 max-w-[1480px] items-center gap-7 px-4 sm:px-6 lg:px-8">
       <button onClick={() => setView('Overview')} className="flex items-center gap-3 text-left" aria-label="ElevenLab overview">
@@ -427,6 +446,18 @@ function formatTime(value: string) {
   return new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/London' }).format(new Date(value));
 }
 
+function formatDateTime(value: string) {
+  return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/London' }).format(new Date(value));
+}
+
+function seasonLabel(season: number) {
+  return `${season}/${String(season + 1).slice(-2)}`;
+}
+
+function wait(milliseconds: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
 function PredictionCard({ home, away, prediction, simulations }: { home: TeamName; away: TeamName; prediction: Prediction; simulations: number }) {
   const h = TEAMS[home], a = TEAMS[away];
   return <Card className="relative border-white/8 bg-card/80 py-0 shadow-2xl shadow-black/15"><div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/80 to-transparent" />
@@ -462,6 +493,128 @@ function MatchLab({ home, away, setHome, setAway, weights, setWeights, predictio
       <div className="space-y-4"><Card className="border-primary/12 bg-card/80"><CardHeader className="flex-row items-start justify-between"><div><Badge className="mb-2 bg-primary/12 text-primary">Live output</Badge><CardTitle className="text-2xl">{home} {prediction.home}% · {prediction.draw}% Draw · {away} {prediction.away}%</CardTitle><p className="mt-1 text-xs text-muted-foreground">{simulations.toLocaleString()} simulations · {prediction.confidence}% confidence</p></div>{trained && <Badge variant="outline" className="border-primary/20 text-primary"><Check /> Updated</Badge>}</CardHeader><CardContent><div className="grid gap-6 md:grid-cols-2"><div><p className="mb-3 text-xs font-semibold uppercase tracking-[.14em] text-muted-foreground">Exact score distribution</p><ChartContainer config={chartConfig} className="h-[260px] w-full"><BarChart data={scores}><CartesianGrid vertical={false} strokeDasharray="4 4" /><XAxis dataKey="score" axisLine={false} tickLine={false} /><YAxis hide /><ChartTooltip content={<ChartTooltipContent />} /><Bar dataKey="value" radius={[6, 6, 0, 0]}>{scores.map((_, i) => <Cell key={i} fill={i === 0 ? 'var(--color-chart-1)' : 'var(--color-chart-3)'} opacity={1 - i * .1} />)}</Bar></BarChart></ChartContainer></div><div><p className="mb-3 text-xs font-semibold uppercase tracking-[.14em] text-muted-foreground">Recent attacking trend</p><TrendChart data={trend} /></div></div></CardContent></Card>
         <div className="grid gap-4 md:grid-cols-3"><SmallStat icon={<Target />} label="Best score" value={prediction.scores[0].label} note={`${prediction.scores[0].value}% probability`} /><SmallStat icon={<Zap />} label="Over 2.5" value={`${prediction.over}%`} note="Goals signal" /><SmallStat icon={<Activity />} label="BTTS" value={`${prediction.btts}%`} note="Both teams score" /></div>
       </div></div>
+  </>;
+}
+
+function ImportDashboard({ competitions }: { competitions: LiveCompetition[] }) {
+  const [status, setStatus] = useState<ImportStatusFeed | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [queueRunning, setQueueRunning] = useState(false);
+  const [queueDone, setQueueDone] = useState(0);
+  const [queueTotal, setQueueTotal] = useState(0);
+  const [queueLabel, setQueueLabel] = useState('');
+  const [queueError, setQueueError] = useState<string | null>(null);
+
+  const loadStatus = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch('/api/football/imports', { cache: 'no-store' });
+      const payload = await response.json() as ImportStatusFeed;
+      setStatus(payload);
+    } catch {
+      setStatus({ connected: false, error: 'The import dashboard could not be reached.' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { void loadStatus(); }, []);
+
+  const availableCompetitions = (competitions.length ? competitions : FIXTURE_COMPETITIONS.map((competition) => ({
+    ...competition,
+    group: '', providerName: competition.name, logo: null, available: true,
+    coverage: { liveEvents: false, fixtureStatistics: false, playerStatistics: false, lineups: false, predictions: true, injuries: false },
+  }))).filter((competition) => competition.season !== null);
+  const storedBySeason = new Map((status?.seasons ?? []).map((season) => [`${season.competitionId}:${season.season}`, season]));
+  const rows = availableCompetitions.map((competition) => {
+    const currentSeason = competition.season ?? 2026;
+    const seasons = Array.from({ length: 5 }, (_, index) => currentSeason - 5 + index).map((season) => {
+      const stored = storedBySeason.get(`${competition.id}:${season}`);
+      const state = stored?.sync?.status === 'complete' ? 'complete' : stored?.sync?.status === 'failed' ? 'failed' : stored?.records ? 'incomplete' : 'missing';
+      return { season, stored, state } as const;
+    });
+    const completed = seasons.filter((season) => season.state === 'complete').length;
+    const records = seasons.reduce((sum, season) => sum + (season.stored?.records ?? 0), 0);
+    const lastSuccess = seasons
+      .map((season) => season.stored?.sync?.status === 'complete' ? season.stored.sync.finishedAt ?? season.stored.lastUpdatedAt : null)
+      .filter((date): date is string => Boolean(date))
+      .sort()
+      .at(-1) ?? null;
+    return { competition, seasons, completed, records, lastSuccess };
+  });
+  const targets = rows.flatMap((row) => row.seasons.filter((season) => season.state !== 'complete').map((season) => ({
+    league: row.competition.id,
+    name: row.competition.name,
+    season: season.season,
+  })));
+  const completedCount = rows.reduce((sum, row) => sum + row.completed, 0);
+  const expectedCount = rows.length * 5;
+  const failedCount = rows.reduce((sum, row) => sum + row.seasons.filter((season) => season.state === 'failed' || season.state === 'incomplete').length, 0);
+  const storedRecords = rows.reduce((sum, row) => sum + row.records, 0);
+
+  const runQueue = async (items: Array<{ league: number; name: string; season: number }>) => {
+    if (!items.length || queueRunning) return;
+    setQueueRunning(true); setQueueDone(0); setQueueTotal(items.length); setQueueError(null);
+    try {
+      for (let index = 0; index < items.length; index++) {
+        const item = items[index];
+        setQueueLabel(`${item.name} · ${seasonLabel(item.season)}`);
+        let result: HistoricalImport | null = null;
+        for (let attempt = 0; attempt < 4; attempt++) {
+          const response = await fetch('/api/football/history', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ league: item.league, seasons: [item.season] }),
+          });
+          result = await response.json() as HistoricalImport;
+          if (result.connected || !result.error?.toLowerCase().includes('too many requests')) break;
+          setQueueLabel(`${item.name} · provider limit reached, retrying`);
+          await wait(20_000);
+        }
+        if (!result?.connected) throw new Error(result?.error ?? `${item.name} ${seasonLabel(item.season)} could not be imported.`);
+        setQueueDone(index + 1);
+        if (index < items.length - 1) await wait(7_000);
+      }
+      setQueueLabel('Queue complete');
+    } catch (error) {
+      setQueueError(error instanceof Error ? error.message : 'The import queue stopped unexpectedly.');
+    } finally {
+      setQueueRunning(false);
+      await loadStatus();
+    }
+  };
+
+  return <>
+    <Intro
+      eyebrow="Historical data operations"
+      title="Import dashboard"
+      copy="Track the five completed seasons behind every competition model, repair incomplete datasets, and run one quota-aware import queue. Existing complete seasons are skipped automatically."
+      action={<div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => void loadStatus()} disabled={loading || queueRunning}><RefreshCw className={loading ? 'animate-spin' : ''} /> Refresh</Button><Button onClick={() => void runQueue(targets)} disabled={!targets.length || queueRunning}>{queueRunning ? <LoaderCircle className="animate-spin" /> : <Upload />} {queueRunning ? `${queueDone}/${queueTotal} imported` : targets.length ? `Import all · ${targets.length} seasons` : 'History complete'}</Button></div>}
+    />
+
+    {queueRunning && <Card className="mb-4 border-primary/18 bg-primary/[.045]"><CardContent className="p-4"><div className="mb-2 flex items-center justify-between gap-4 text-xs"><span className="font-medium text-primary">{queueLabel}</span><span className="font-mono text-muted-foreground">{queueDone} of {queueTotal}</span></div><Progress value={queueTotal ? queueDone / queueTotal * 100 : 0} /><p className="mt-2 text-[11px] text-muted-foreground">Imports are spaced to protect the provider allowance. You can continue using this page while the queue runs.</p></CardContent></Card>}
+    {queueError && <div className="mb-4 rounded-xl border border-amber-300/20 bg-amber-300/[.04] p-4 text-sm"><p className="font-medium text-amber-100">The queue paused after an import failed.</p><p className="mt-1 text-xs text-muted-foreground">{queueError} Refresh the status, then retry the remaining seasons.</p></div>}
+
+    <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <SmallStat icon={<Database />} label="Historical records" value={storedRecords.toLocaleString()} note="Fixtures in the five-season windows" />
+      <SmallStat icon={<Check />} label="Complete seasons" value={`${completedCount}/${expectedCount}`} note={`${targets.length} still queued or missing`} />
+      <SmallStat icon={<Activity />} label="Needs attention" value={String(failedCount)} note="Failed or incomplete seasons" />
+      <SmallStat icon={<Gauge />} label="Provider allowance" value={status?.quota ? status.quota.remaining.toLocaleString() : '—'} note={status?.quota ? `${status.quota.current.toLocaleString()} of ${status.quota.limit.toLocaleString()} used today` : 'Quota status unavailable'} />
+    </div>
+
+    <Card className="border-white/8 bg-card/75">
+      <CardHeader className="gap-2 sm:flex-row sm:items-center sm:justify-between"><div><CardTitle>Competition history</CardTitle><p className="mt-1 text-xs text-muted-foreground">Five completed seasons per competition · green is ready for modelling.</p></div>{status?.quota?.plan && <Badge variant="outline" className="border-primary/25 text-primary">{status.quota.plan} plan · {status.quota.active === false ? 'inactive' : 'active'}</Badge>}</CardHeader>
+      <CardContent className="overflow-x-auto">
+        {loading && !status ? <div className="flex min-h-56 items-center justify-center gap-3 text-sm text-muted-foreground"><LoaderCircle className="size-5 animate-spin text-primary" /> Reading import history…</div> : !status?.connected ? <div className="rounded-xl border border-amber-300/15 bg-amber-300/[.04] p-5"><p className="font-medium text-amber-100">Import status is unavailable.</p><p className="mt-1 text-sm text-muted-foreground">{status?.error ?? 'The database did not return import records.'}</p></div> : <table className="w-full min-w-[980px] text-left text-sm">
+          <thead className="border-y border-white/8 text-[10px] uppercase tracking-[.12em] text-muted-foreground"><tr><th className="px-3 py-3 font-medium">Competition</th><th className="px-3 py-3 font-medium">Season coverage</th><th className="px-3 py-3 text-right font-medium">Records</th><th className="px-3 py-3 font-medium">Last success</th><th className="px-3 py-3 text-right font-medium">Action</th></tr></thead>
+          <tbody>{rows.map((row) => {
+            const missing = row.seasons.filter((season) => season.state !== 'complete').map((season) => ({ league: row.competition.id, name: row.competition.name, season: season.season }));
+            return <tr key={row.competition.id} className="border-b border-white/6 align-middle hover:bg-white/[.02]"><td className="px-3 py-4"><div className="flex items-center gap-3">{row.competition.logo ? <img src={row.competition.logo} alt="" className="size-7 object-contain" /> : <span className="grid size-7 place-items-center rounded-lg bg-white/5 text-[10px] font-bold">{row.competition.name.slice(0, 2).toUpperCase()}</span>}<div><p className="font-medium">{row.competition.name}</p><p className="mt-0.5 text-[10px] text-muted-foreground">{row.completed}/5 seasons ready</p></div></div></td><td className="px-3"><div className="flex gap-1.5">{row.seasons.map((season) => <span key={season.season} title={season.stored?.sync?.error ?? `${seasonLabel(season.season)} · ${season.state}`} className={`rounded-md border px-2 py-1 font-mono text-[10px] ${season.state === 'complete' ? 'border-primary/20 bg-primary/10 text-primary' : season.state === 'failed' ? 'border-red-300/20 bg-red-300/[.06] text-red-200' : season.state === 'incomplete' ? 'border-amber-300/20 bg-amber-300/[.06] text-amber-200' : 'border-white/8 text-muted-foreground'}`}>{String(season.season).slice(-2)}/{String(season.season + 1).slice(-2)}</span>)}</div></td><td className="px-3 text-right font-mono text-xs">{row.records.toLocaleString()}</td><td className="px-3 text-xs text-muted-foreground">{row.lastSuccess ? formatDateTime(row.lastSuccess) : 'Never'}</td><td className="px-3 text-right"><Button variant="outline" size="sm" disabled={!missing.length || queueRunning} onClick={() => void runQueue(missing)}>{missing.length ? `Import ${missing.length}` : <><Check /> Ready</>}</Button></td></tr>;
+          })}</tbody>
+        </table>}
+      </CardContent>
+    </Card>
+    <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-[10px] text-muted-foreground"><span><span className="mr-1.5 inline-block size-2 rounded-full bg-primary" />Complete</span><span><span className="mr-1.5 inline-block size-2 rounded-full bg-amber-200" />Incomplete</span><span><span className="mr-1.5 inline-block size-2 rounded-full bg-red-200" />Failed</span><span><span className="mr-1.5 inline-block size-2 rounded-full bg-white/20" />Missing</span></div>
   </>;
 }
 
