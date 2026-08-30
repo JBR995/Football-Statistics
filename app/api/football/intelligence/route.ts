@@ -1,14 +1,7 @@
 import { ensureFootballSchema } from '@/db/football';
+import { getCompetition } from '@/lib/competitions';
 
 const API_URL = 'https://v3.football.api-sports.io/fixtures';
-const COMPETITIONS = new Map([
-  [39, { name: 'Premier League', country: 'England' }], [40, { name: 'EFL Championship', country: 'England' }],
-  [41, { name: 'EFL League One', country: 'England' }], [42, { name: 'EFL League Two', country: 'England' }],
-  [61, { name: 'Ligue 1', country: 'France' }], [140, { name: 'La Liga', country: 'Spain' }],
-  [78, { name: 'Bundesliga', country: 'Germany' }], [135, { name: 'Serie A', country: 'Italy' }],
-  [88, { name: 'Eredivisie', country: 'Netherlands' }], [2, { name: 'UEFA Champions League', country: 'UEFA' }],
-  [3, { name: 'UEFA Europa League', country: 'UEFA' }], [848, { name: 'UEFA Conference League', country: 'UEFA' }],
-]);
 
 type ApiFixture = {
   fixture: { id: number; date: string; status: { short: string }; venue: { name: string | null } };
@@ -28,7 +21,7 @@ export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
   const leagueId = Number(params.get('league') ?? 39);
   const season = Number(params.get('season') ?? 2026);
-  const competition = COMPETITIONS.get(leagueId);
+  const competition = getCompetition(leagueId);
   if (!competition || !Number.isInteger(season)) return Response.json({ error: 'Unsupported competition or season.' }, { status: 400 });
 
   try {

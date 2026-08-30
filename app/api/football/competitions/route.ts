@@ -1,20 +1,13 @@
+import { COMPETITIONS } from '@/lib/competitions';
+
 const API_URL = 'https://v3.football.api-sports.io/leagues?current=true';
 const CACHE_SECONDS = 21_600;
 
-const REQUESTED_COMPETITIONS = [
-  { id: 39, displayName: 'Premier League', group: 'England' },
-  { id: 40, displayName: 'EFL Championship', group: 'England' },
-  { id: 41, displayName: 'EFL League One', group: 'England' },
-  { id: 42, displayName: 'EFL League Two', group: 'England' },
-  { id: 61, displayName: 'Ligue 1', group: 'France' },
-  { id: 140, displayName: 'La Liga', group: 'Spain' },
-  { id: 78, displayName: 'Bundesliga', group: 'Germany' },
-  { id: 135, displayName: 'Serie A', group: 'Italy' },
-  { id: 88, displayName: 'Eredivisie', group: 'Netherlands' },
-  { id: 2, displayName: 'UEFA Champions League', group: 'UEFA' },
-  { id: 3, displayName: 'UEFA Europa League', group: 'UEFA' },
-  { id: 848, displayName: 'UEFA Conference League', group: 'UEFA' },
-] as const;
+const REQUESTED_COMPETITIONS = COMPETITIONS.map((competition) => ({
+  id: competition.id,
+  displayName: competition.name,
+  group: competition.country,
+}));
 
 type ApiSeason = {
   year: number;

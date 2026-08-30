@@ -1,21 +1,8 @@
+import { getCompetition } from '@/lib/competitions';
+
 const API_URL = 'https://v3.football.api-sports.io/fixtures';
 const CACHE_SECONDS = 43_200;
 const RESTRICTION_CACHE_SECONDS = 300;
-
-const COMPETITIONS = new Map([
-  [39, 'Premier League'],
-  [40, 'EFL Championship'],
-  [41, 'EFL League One'],
-  [42, 'EFL League Two'],
-  [61, 'Ligue 1'],
-  [140, 'La Liga'],
-  [78, 'Bundesliga'],
-  [135, 'Serie A'],
-  [88, 'Eredivisie'],
-  [2, 'UEFA Champions League'],
-  [3, 'UEFA Europa League'],
-  [848, 'UEFA Conference League'],
-]);
 
 const PREMIER_LEAGUE_SNAPSHOT = [
   { id: 1557379, kickoff: '2026-08-30T14:00:00+01:00', timezone: 'Europe/London', status: { long: 'Not Started', short: 'NS' }, venue: { name: 'Stamford Bridge', city: 'London' }, league: { id: 39, name: 'Premier League', logo: 'https://media.api-sports.io/football/leagues/39.png', season: 2026, round: 'Regular Season - 2' }, home: { id: 49, name: 'Chelsea', logo: 'https://media.api-sports.io/football/teams/49.png' }, away: { id: 51, name: 'Brighton', logo: 'https://media.api-sports.io/football/teams/51.png' } },
@@ -51,7 +38,7 @@ const memoryCache = new Map<string, { expiresAt: number; body: string; status: n
 export async function GET(request: Request) {
   const searchParams = new URL(request.url).searchParams;
   const leagueId = Number(searchParams.get('league') ?? 39);
-  const competitionName = COMPETITIONS.get(leagueId);
+  const competitionName = getCompetition(leagueId)?.name;
   if (!competitionName) {
     return Response.json({ connected: false, error: 'That competition is not enabled.' }, { status: 400 });
   }
