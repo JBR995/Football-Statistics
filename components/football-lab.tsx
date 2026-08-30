@@ -89,6 +89,19 @@ type FixtureFeed = {
   fixtures?: UpcomingFixture[];
   error?: string;
 };
+type StoredFixture = { id: number; kickoff: string; status: string; round: string | null; venue: string | null; home: { id: number; name: string; logo: string | null }; away: { id: number; name: string; logo: string | null }; score: { home: number | null; away: number | null } };
+type StandingRow = { position: number; id: number; name: string; logo: string | null; played: number; won: number; drawn: number; lost: number; gf: number; ga: number; gd: number; points: number };
+type IntelligenceFeed = {
+  connected: boolean;
+  synced?: boolean;
+  competition?: { id: number; name: string; country: string; season: number };
+  summary?: { records: number; completed: number; upcoming: number; goals: number; averageGoals: number; teams: number };
+  standings?: StandingRow[];
+  upcoming?: StoredFixture[];
+  recent?: StoredFixture[];
+  lastSyncedAt?: string | null;
+  error?: string;
+};
 
 const FIXTURE_COMPETITIONS = [
   { id: 39, name: 'Premier League', season: 2026 },
@@ -124,6 +137,8 @@ export function FootballLab() {
   const [selectedLeague, setSelectedLeague] = useState(39);
   const [fixtureFeed, setFixtureFeed] = useState<FixtureFeed | null>(null);
   const [fixturesLoading, setFixturesLoading] = useState(true);
+  const [intelligence, setIntelligence] = useState<IntelligenceFeed | null>(null);
+  const [intelligenceLoading, setIntelligenceLoading] = useState(true);
   const selectedSeason = competitionFeed?.competitions?.find((competition) => competition.id === selectedLeague)?.season
     ?? FIXTURE_COMPETITIONS.find((competition) => competition.id === selectedLeague)?.season;
 
@@ -159,6 +174,23 @@ export function FootballLab() {
     return () => { active = false; };
   }, [feedLoading, selectedLeague, selectedSeason]);
   useEffect(() => {
+    if (!selectedSeason) return;
+    let active = true;
+    setIntelligenceLoading(true);
+    fetch(`/api/football/intelligence?league=${selectedLeague}&season=${selectedSeason}`)
+      .then(async (response) => {
+        const payload = await response.json() as IntelligenceFeed;
+        if (active) setIntelligence(payload);
+      })
+      .catch(() => {
+        if (active) setIntelligence({ connected: false, error: 'The competition database could not be reached.' });
+      })
+      .finally(() => {
+        if (active) setIntelligenceLoading(false);
+      });
+    return () => { active = false; };
+  }, [selectedLeague, selectedSeason]);
+  useEffect(() => {
     window.localStorage.setItem('elevenlab-model', JSON.stringify({ weights, simulations }));
   }, [weights, simulations]);
   useEffect(() => {
@@ -187,7 +219,7 @@ export function FootballLab() {
   return <main className="min-h-screen bg-background text-foreground">
     <Header view={view} setView={setView} connected={competitionFeed?.connected === true} feedLoading={feedLoading} />
     <div className="mx-auto max-w-[1480px] px-4 py-6 sm:px-6 lg:px-8">
-      {view === 'Overview' && <Overview feed={fixtureFeed} loading={fixturesLoading} competitions={competitionFeed?.competitions ?? []} selectedLeague={selectedLeague} setSelectedLeague={setSelectedLeague} setView={setView} />}
+      {view === 'Overview' && <Overview feed={fixtureFeed} loading={fixturesLoading} intelligence={intelligence} intelligenceLoading={intelligenceLoading} competitions={competitionFeed?.competitions ?? []} selectedLeague={selectedLeague} setSelectedLeague={setSelectedLeague} setView={setView} />}
       {view === 'Match Lab' && <MatchLab home={home} away={away} setHome={setHome} setAway={setAway} weights={weights} setWeights={setWeights} prediction={prediction} trend={trend} simulations={simulations} run={run} running={running} trained={trained} />}
       {view === 'Data Explorer' && <DataExplorer feed={competitionFeed} loading={feedLoading} />}
       {view === 'Models' && <Models weights={weights} setWeights={setWeights} simulations={simulations} run={run} running={running} trained={trained} />}
@@ -227,7 +259,7 @@ function Intro({ eyebrow, title, copy, action }: { eyebrow: string; title: strin
   </section>;
 }
 
-function Overview({ feed, loading, competitions, selectedLeague, setSelectedLeague, setView }: { feed: FixtureFeed | null; loading: boolean; competitions: LiveCompetition[]; selectedLeague: number; setSelectedLeague: (league: number) => void; setView: (view: View) => void }) {
+function Overview({ feed, loading, intelligence, intelligenceLoading, competitions, selectedLeague, setSelectedLeague, setView }: { feed: FixtureFeed | null; loading: boolean; intelligence: IntelligenceFeed | null; intelligenceLoading: boolean; competitions: LiveCompetition[]; selectedLeague: number; setSelectedLeague: (league: number) => void; setView: (view: View) => void }) {
   const fixtures = feed?.fixtures ?? [];
   const nextFixture = fixtures[0];
   const displayCompetitions = competitions.length ? competitions : FIXTURE_COMPETITIONS;
@@ -239,7 +271,25 @@ function Overview({ feed, loading, competitions, selectedLeague, setSelectedLeag
       <Card className="relative border-primary/15 bg-card/80 py-0"><div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/80 to-transparent" /><CardHeader className="border-b border-white/8 px-5 py-5 sm:flex-row sm:items-center sm:justify-between"><div><div className="mb-2 flex flex-wrap items-center gap-2"><Badge className="bg-primary/12 text-primary">{feed.snapshot ? 'Verified provider snapshot' : 'Next confirmed fixture'}</Badge><span className="text-xs text-muted-foreground">{formatKickoff(nextFixture.kickoff)}{nextFixture.venue.name ? ` · ${nextFixture.venue.name}` : ''}</span></div><CardTitle className="text-xl">{nextFixture.home.name} vs {nextFixture.away.name}</CardTitle></div><div className="mt-3 text-xs text-muted-foreground sm:mt-0">{nextFixture.league.round ?? nextFixture.status.long}</div></CardHeader><CardContent className="grid items-center gap-6 p-6 sm:grid-cols-[1fr_auto_1fr]"><FixtureTeam team={nextFixture.home} /><div className="text-center"><p className="font-mono text-2xl text-primary">{formatTime(nextFixture.kickoff)}</p><p className="mt-1 text-[11px] uppercase tracking-[.14em] text-muted-foreground">Europe/London</p></div><FixtureTeam team={nextFixture.away} align="right" /></CardContent></Card>
       <section className="mt-4"><div className="mb-3 flex items-end justify-between"><div><h2 className="font-semibold">Following fixtures</h2><p className="mt-1 text-xs text-muted-foreground">Provider-confirmed schedule for {feed.competition?.name}</p></div><Badge variant="outline">{fixtures.length} matches</Badge></div><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{fixtures.slice(1).map((fixture) => <Card key={fixture.id} className="border-white/8 bg-card/70"><CardContent className="p-4"><div className="mb-3 flex items-center justify-between text-[11px] text-muted-foreground"><span>{formatKickoff(fixture.kickoff)}</span><span>{fixture.league.round ?? fixture.status.short}</span></div><div className="space-y-2 text-sm"><div className="flex items-center gap-2">{fixture.home.logo && <img src={fixture.home.logo} alt="" className="size-5 object-contain" />}<span className="font-medium">{fixture.home.name}</span></div><div className="flex items-center gap-2">{fixture.away.logo && <img src={fixture.away.logo} alt="" className="size-5 object-contain" />}<span className="font-medium">{fixture.away.name}</span></div></div>{fixture.venue.name && <p className="mt-3 truncate text-[11px] text-muted-foreground">{fixture.venue.name}</p>}</CardContent></Card>)}</div></section>
     </>}
+    <CompetitionDatabase feed={intelligence} loading={intelligenceLoading} />
   </>;
+}
+
+function CompetitionDatabase({ feed, loading }: { feed: IntelligenceFeed | null; loading: boolean }) {
+  if (loading) return <Card className="mt-6 border-primary/12 bg-card/75"><CardContent className="flex min-h-56 items-center justify-center gap-3 text-sm text-muted-foreground"><LoaderCircle className="size-5 animate-spin text-primary" /> Building the competition database…</CardContent></Card>;
+  if (!feed?.connected || !feed.summary) return <Card className="mt-6 border-amber-300/15 bg-card/75"><CardContent className="p-6"><p className="font-medium text-amber-100">Competition database unavailable</p><p className="mt-2 text-sm text-muted-foreground">{feed?.error ?? 'No stored records were returned.'}</p></CardContent></Card>;
+  const stats = [
+    ['Season records', feed.summary.records], ['Completed', feed.summary.completed], ['Scheduled', feed.summary.upcoming],
+    ['Goals', feed.summary.goals], ['Goals / match', feed.summary.averageGoals], ['Teams ranked', feed.summary.teams],
+  ];
+  return <section className="mt-7">
+    <div className="mb-4 flex flex-wrap items-end justify-between gap-3"><div><p className="text-xs font-medium uppercase tracking-[.16em] text-primary">Persistent data layer</p><h2 className="mt-1 text-2xl font-semibold tracking-[-.035em]">Competition intelligence</h2><p className="mt-1 text-xs text-muted-foreground">Results, fixtures and standings calculated from stored provider records.</p></div><Badge variant="outline" className="border-primary/25 text-primary"><Database className="mr-1 size-3" /> {feed.synced ? 'Dataset imported' : 'Database current'}</Badge></div>
+    <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">{stats.map(([label, value]) => <Card key={String(label)} className="border-white/8 bg-card/70"><CardContent className="p-4"><p className="font-mono text-xl text-primary">{value}</p><p className="mt-1 text-[11px] text-muted-foreground">{label}</p></CardContent></Card>)}</div>
+    <div className="grid gap-4 xl:grid-cols-[1.3fr_.7fr]">
+      <Card className="border-white/8 bg-card/75"><CardHeader className="flex-row items-center justify-between"><div><CardTitle>Calculated table</CardTitle><p className="mt-1 text-xs text-muted-foreground">Built from completed matches in the database</p></div><Badge variant="outline">{feed.competition?.season}/{String((feed.competition?.season ?? 0) + 1).slice(-2)}</Badge></CardHeader><CardContent className="overflow-x-auto"><table className="w-full min-w-[620px] text-sm"><thead className="border-y border-white/8 text-[10px] uppercase tracking-[.12em] text-muted-foreground"><tr>{['#', 'Team', 'P', 'W', 'D', 'L', 'GF', 'GA', 'GD', 'Pts'].map((head) => <th key={head} className={`px-2 py-3 font-medium ${head === 'Team' ? 'text-left' : 'text-right'}`}>{head}</th>)}</tr></thead><tbody>{feed.standings?.map((team) => <tr key={team.id} className="border-b border-white/6"><td className="px-2 py-3 text-right font-mono text-muted-foreground">{team.position}</td><td className="px-2 py-3"><div className="flex items-center gap-2">{team.logo && <img src={team.logo} alt="" className="size-5 object-contain" />}<span className="font-medium">{team.name}</span></div></td>{[team.played, team.won, team.drawn, team.lost, team.gf, team.ga, team.gd, team.points].map((value, index) => <td key={index} className={`px-2 text-right font-mono ${index === 7 ? 'font-semibold text-primary' : ''}`}>{value}</td>)}</tr>)}</tbody></table></CardContent></Card>
+      <Card className="border-white/8 bg-card/75"><CardHeader><CardTitle>Recent results</CardTitle><p className="text-xs text-muted-foreground">Latest completed matches</p></CardHeader><CardContent className="space-y-2">{feed.recent?.map((fixture) => <div key={fixture.id} className="rounded-xl border border-white/7 bg-white/[.02] p-3"><div className="mb-2 flex items-center justify-between text-[10px] text-muted-foreground"><span>{formatKickoff(fixture.kickoff)}</span><span>{fixture.round}</span></div><div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 text-sm"><span className="truncate font-medium">{fixture.home.name}</span><span className="rounded-md bg-white/6 px-2 py-1 font-mono text-primary">{fixture.score.home}–{fixture.score.away}</span><span className="truncate text-right font-medium">{fixture.away.name}</span></div></div>)}</CardContent></Card>
+    </div>
+  </section>;
 }
 
 function FixtureTeam({ team, align }: { team: UpcomingFixture['home']; align?: 'right' }) {
