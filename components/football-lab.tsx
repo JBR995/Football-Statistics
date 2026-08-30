@@ -89,6 +89,21 @@ type FixtureFeed = {
   error?: string;
 };
 
+const FIXTURE_COMPETITIONS = [
+  { id: 39, name: 'Premier League', season: 2026 },
+  { id: 40, name: 'EFL Championship', season: 2026 },
+  { id: 41, name: 'EFL League One', season: 2026 },
+  { id: 42, name: 'EFL League Two', season: 2026 },
+  { id: 61, name: 'Ligue 1', season: 2026 },
+  { id: 140, name: 'La Liga', season: 2026 },
+  { id: 78, name: 'Bundesliga', season: 2026 },
+  { id: 135, name: 'Serie A', season: 2026 },
+  { id: 88, name: 'Eredivisie', season: 2026 },
+  { id: 2, name: 'UEFA Champions League', season: 2026 },
+  { id: 3, name: 'UEFA Europa League', season: 2026 },
+  { id: 848, name: 'UEFA Conference League', season: 2026 },
+] as const;
+
 const chartConfig = {
   home: { label: 'Home xG', color: 'var(--color-chart-1)' },
   away: { label: 'Away xG', color: 'var(--color-chart-3)' },
@@ -108,7 +123,8 @@ export function FootballLab() {
   const [selectedLeague, setSelectedLeague] = useState(39);
   const [fixtureFeed, setFixtureFeed] = useState<FixtureFeed | null>(null);
   const [fixturesLoading, setFixturesLoading] = useState(true);
-  const selectedSeason = competitionFeed?.competitions?.find((competition) => competition.id === selectedLeague)?.season;
+  const selectedSeason = competitionFeed?.competitions?.find((competition) => competition.id === selectedLeague)?.season
+    ?? FIXTURE_COMPETITIONS.find((competition) => competition.id === selectedLeague)?.season;
 
   useEffect(() => {
     const saved = window.localStorage.getItem('elevenlab-model');
@@ -213,9 +229,10 @@ function Intro({ eyebrow, title, copy, action }: { eyebrow: string; title: strin
 function Overview({ feed, loading, competitions, selectedLeague, setSelectedLeague, setView }: { feed: FixtureFeed | null; loading: boolean; competitions: LiveCompetition[]; selectedLeague: number; setSelectedLeague: (league: number) => void; setView: (view: View) => void }) {
   const fixtures = feed?.fixtures ?? [];
   const nextFixture = fixtures[0];
-  const selectedCompetition = competitions.find((competition) => competition.id === selectedLeague);
+  const displayCompetitions = competitions.length ? competitions : FIXTURE_COMPETITIONS;
+  const selectedCompetition = displayCompetitions.find((competition) => competition.id === selectedLeague);
   return <>
-    <Intro eyebrow="Verified provider schedule" title="Upcoming fixtures" copy="Current fixtures are displayed only when returned by the connected statistics provider. No match, date, venue, or prediction is invented." action={<Select value={String(selectedLeague)} onValueChange={(value) => value && setSelectedLeague(Number(value))}><SelectTrigger className="w-[230px]"><span className="truncate">{selectedCompetition?.name ?? feed?.competition?.name ?? 'Premier League'}</span></SelectTrigger><SelectContent>{competitions.length ? competitions.map((competition) => <SelectItem key={competition.id} value={String(competition.id)}>{competition.name}</SelectItem>) : <SelectItem value="39">Premier League</SelectItem>}</SelectContent></Select>} />
+    <Intro eyebrow="Verified provider schedule" title="Upcoming fixtures" copy="Current fixtures are displayed only when returned by the connected statistics provider. No match, date, venue, or prediction is invented." action={<Select value={String(selectedLeague)} onValueChange={(value) => value && setSelectedLeague(Number(value))}><SelectTrigger className="w-[230px]"><span className="truncate">{selectedCompetition?.name ?? feed?.competition?.name ?? 'Premier League'}</span></SelectTrigger><SelectContent>{displayCompetitions.map((competition) => <SelectItem key={competition.id} value={String(competition.id)}>{competition.name}</SelectItem>)}</SelectContent></Select>} />
 
     {loading ? <Card className="border-white/8 bg-card/75"><CardContent className="flex min-h-[320px] items-center justify-center gap-3 text-sm text-muted-foreground"><LoaderCircle className="size-5 animate-spin text-primary" /> Loading the provider schedule…</CardContent></Card> : feed?.restricted ? <Card className="border-amber-300/20 bg-[linear-gradient(145deg,rgba(251,191,36,.07),rgba(13,20,29,.88)_48%)]"><CardContent className="grid gap-6 p-6 lg:grid-cols-[1fr_auto] lg:items-center"><div><Badge variant="outline" className="mb-4 border-amber-300/25 text-amber-200">Provider plan restriction</Badge><h2 className="text-2xl font-semibold tracking-[-.035em]">Current fixtures are not available on this API plan</h2><p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">{feed.error} The connection itself works, but the provider will not return the live {feed.competition?.name ?? 'competition'} schedule until the plan or data source changes.</p><div className="mt-5 flex flex-wrap gap-2"><Button onClick={() => setView('Data Explorer')} variant="outline">Review available coverage</Button><Badge variant="outline" className="h-9 px-3 text-muted-foreground">Requested season {feed.competition?.season}/{String((feed.competition?.season ?? 0) + 1).slice(-2)}</Badge></div></div><ShieldCheck className="hidden size-16 text-amber-200/45 lg:block" /></CardContent></Card> : !feed?.connected ? <Card className="border-amber-300/20 bg-card/75"><CardContent className="p-6"><h2 className="font-semibold text-amber-100">Fixture service unavailable</h2><p className="mt-2 text-sm text-muted-foreground">{feed?.error ?? 'The provider did not return a schedule.'}</p></CardContent></Card> : !nextFixture ? <Card className="border-white/8 bg-card/75"><CardContent className="p-6"><h2 className="font-semibold">No upcoming fixtures returned</h2><p className="mt-2 text-sm text-muted-foreground">There are currently no future matches in the provider response for {feed.competition?.name}.</p></CardContent></Card> : <>
       <Card className="relative border-primary/15 bg-card/80 py-0"><div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/80 to-transparent" /><CardHeader className="border-b border-white/8 px-5 py-5 sm:flex-row sm:items-center sm:justify-between"><div><div className="mb-2 flex flex-wrap items-center gap-2"><Badge className="bg-primary/12 text-primary">Next confirmed fixture</Badge><span className="text-xs text-muted-foreground">{formatKickoff(nextFixture.kickoff)}{nextFixture.venue.name ? ` · ${nextFixture.venue.name}` : ''}</span></div><CardTitle className="text-xl">{nextFixture.home.name} vs {nextFixture.away.name}</CardTitle></div><div className="mt-3 text-xs text-muted-foreground sm:mt-0">{nextFixture.league.round ?? nextFixture.status.long}</div></CardHeader><CardContent className="grid items-center gap-6 p-6 sm:grid-cols-[1fr_auto_1fr]"><FixtureTeam team={nextFixture.home} /><div className="text-center"><p className="font-mono text-2xl text-primary">{formatTime(nextFixture.kickoff)}</p><p className="mt-1 text-[11px] uppercase tracking-[.14em] text-muted-foreground">Europe/London</p></div><FixtureTeam team={nextFixture.away} align="right" /></CardContent></Card>
