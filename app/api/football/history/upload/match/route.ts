@@ -13,7 +13,9 @@ const MAX_TEAMS = 2;
 const MAX_BOOKMAKERS = 30;
 const MAX_PLAYERS = 30;
 const MAX_INJURIES = 80;
-const MAX_COUNT = 500;
+// Passing totals regularly exceed 500; 5,000 still rejects implausible or
+// accidentally cumulative values while accommodating real match data.
+const MAX_COUNT = 5000;
 const MIN_ODDS = 1.01;
 const MAX_ODDS = 1000;
 
