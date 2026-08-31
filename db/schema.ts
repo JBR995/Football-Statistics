@@ -61,6 +61,10 @@ export const predictionSnapshots = sqliteTable('prediction_snapshots', {
   expectedAwayGoals: real('expected_away_goals').notNull(),
   over25Probability: real('over25_probability').notNull(),
   bttsProbability: real('btts_probability').notNull(),
+  marketHomeProbability: real('market_home_probability'),
+  marketDrawProbability: real('market_draw_probability'),
+  marketAwayProbability: real('market_away_probability'),
+  marketBookmakers: integer('market_bookmakers'),
   trainingMatches: integer('training_matches').notNull(),
   createdAt: text('created_at').notNull(),
 }, (table) => [

@@ -145,6 +145,19 @@ try {
   check('line-ups are stored', (detailRow?.lineups ?? 0) > 0, `${detailRow?.lineups} matches`);
   check('odds are stored', (detailRow?.odds ?? 0) > 0, `${detailRow?.odds} matches`);
 
+  const odds = await runScript('scripts/import-match-detail.mjs', [
+    '--site', site, '--token', 'dev', '--provider', provider,
+    '--leagues', String(LEAGUE), '--seasons', String(SEASON), '--include', 'odds',
+    '--budget', '500', '--batch', '50', '--delay', '0', '--retry-empty',
+  ]);
+  check('upcoming odds are stored', odds.code === 0, odds.output.trim().split('\n').filter((line) => line.includes('provider calls')).at(-1));
+
+  const marketSnapshot = await post('/api/football/predictions/snapshot', { withinDays: 30 });
+  check('market prices are frozen with forecasts', (marketSnapshot.body?.withMarket ?? 0) > 0, `${marketSnapshot.body?.withMarket} forecasts carry the pre-kickoff market`);
+  const settledWithMarket = await settleSomeFixtures(20);
+  const compared = await api('/api/football/predictions/snapshot?withinDays=30');
+  check('model and market are scored together', (compared.body?.marketComparison?.matches ?? 0) > 0, `${compared.body?.marketComparison?.matches} matched results after settling ${settledWithMarket}`);
+
   const withDetail = await api(`/api/football/history/coverage?missing=statistics&league=${LEAGUE}&season=${SEASON}&limit=5`);
   check('outstanding work is listable', typeof withDetail.body?.remaining === 'number', `${withDetail.body?.remaining} fixtures still without statistics`);
 
@@ -183,13 +196,15 @@ function validFixture(overrides = {}) {
 
 // Re-uploads the season with its earliest upcoming fixtures marked complete,
 // which is what a result sync would do the morning after a round.
-async function settleSomeFixtures() {
+async function settleSomeFixtures(skip = 0) {
   const response = await fetch(`${provider}/fixtures?league=${LEAGUE}&season=${SEASON}`, { headers: { 'x-apisports-key': 'mock-key' } });
   const { response: fixtures } = await response.json();
   let settled = 0;
+  let upcomingSeen = 0;
   const payload = fixtures.map((item) => {
     const upcoming = item.fixture.status.short === 'NS';
-    const settle = upcoming && settled < 20 && ++settled;
+    if (upcoming) upcomingSeen++;
+    const settle = upcoming && upcomingSeen > skip && settled < 20 && ++settled;
     return {
       id: item.fixture.id,
       kickoff: item.fixture.date,

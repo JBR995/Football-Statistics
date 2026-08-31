@@ -10,6 +10,24 @@ Read `## Next, in order` if you only read one section.
 reading, with screenshots of the branch running and a diagram of the
 ingestion path.
 
+## Codex continuation — 31 August 2026
+
+- The Claude branch was fast-forwarded into `main`, verified, and deployed.
+- The local importer authentication header was corrected to
+  `OAI-Sites-Authorization`.
+- Historical ingestion is complete: **60/60 competition-seasons**, with the
+  49 missing seasons adding 17,985 fixtures and no failures.
+- The first real pre-kickoff record stored 32 upcoming forecasts.
+- API-Football returned no bookmaker data for sampled Premier League and
+  Championship fixtures in every season from 2021 through 2025, so the planned
+  4,686-call historical odds sweep was stopped before wasting the allowance.
+- Current Premier League odds were available and imported: 30 fixtures and 344
+  bookmaker rows. The snapshot schema now freezes the de-vigged 1X2 market
+  probabilities beside each new forecast, and Models reports model-versus-market
+  Brier and log-loss scores on the same settled fixtures.
+- The expanded offline verification now has 23 checks, including market capture
+  before kickoff and model-versus-market scoring after settlement.
+
 ---
 
 ## Where it stands

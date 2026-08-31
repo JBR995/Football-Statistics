@@ -1,5 +1,6 @@
 import { FIXTURE_QUERY, readCompletedHistory } from '@/db/fixtures';
 import { ensureFootballSchema } from '@/db/football';
+import { readStoredOdds } from '@/db/match-detail-read';
 import { writeSnapshot } from '@/db/snapshots';
 import { getCompetition } from '@/lib/competitions';
 import { MODEL_NAME, MODEL_VERSION, outcomeIndex, predict, prepareModel, type FixtureRow } from '@/lib/model';
@@ -28,6 +29,10 @@ type ScoredSnapshot = {
   home_probability: number;
   draw_probability: number;
   away_probability: number;
+  market_home_probability: number | null;
+  market_draw_probability: number | null;
+  market_away_probability: number | null;
+  market_bookmakers: number | null;
   home_goals: number;
   away_goals: number;
 };
@@ -68,6 +73,7 @@ export async function POST(request: Request) {
     }
 
     let stored = 0;
+    let withMarket = 0;
     let unchanged = 0;
     const skipped: Array<{ competitionId: number; season: number; reason: string }> = [];
     for (const group of groups.values()) {
@@ -84,8 +90,18 @@ export async function POST(request: Request) {
       }
       const context = prepareModel(history);
       for (const fixture of group) {
-        const written = await writeSnapshot(db, fixture, predict(fixture, context), history.length);
-        if (written) stored++;
+        const storedOdds = await readStoredOdds(db, fixture.id);
+        const market = storedOdds.market ? {
+          home: storedOdds.market.probabilities.home / 100,
+          draw: storedOdds.market.probabilities.draw / 100,
+          away: storedOdds.market.probabilities.away / 100,
+          bookmakers: storedOdds.market.bookmakers,
+        } : null;
+        const written = await writeSnapshot(db, fixture, predict(fixture, context), history.length, market);
+        if (written) {
+          stored++;
+          if (market) withMarket++;
+        }
         else unchanged++;
       }
     }
@@ -96,6 +112,7 @@ export async function POST(request: Request) {
       windowDays: withinDays,
       scanned: fixtures.length,
       stored,
+      withMarket,
       unchanged,
       skipped,
       truncated,
@@ -134,7 +151,9 @@ export async function GET(request: Request) {
     // against and the kickoff the fixture was actually played at.
     const rows = (await db.prepare(`
       SELECT s.id, s.fixture_id, s.competition_id, c.name AS competition_name, s.season, s.model_version, s.created_at,
-             f.kickoff, s.home_probability, s.draw_probability, s.away_probability, f.home_goals, f.away_goals
+             f.kickoff, s.home_probability, s.draw_probability, s.away_probability,
+             s.market_home_probability, s.market_draw_probability, s.market_away_probability, s.market_bookmakers,
+             f.home_goals, f.away_goals
       FROM prediction_snapshots s
       JOIN fixtures f ON f.id = s.fixture_id
       LEFT JOIN competitions c ON c.id = s.competition_id AND c.season = s.season
@@ -173,6 +192,7 @@ export async function GET(request: Request) {
       },
       awaitingResult: Number(pendingResult),
       performance: score(scored),
+      marketComparison: compareMarket(scored),
       byCompetition: byCompetition(scored),
       calibration: calibration(scored),
       methodology: 'Scored on the last forecast recorded before kickoff for each fixture. Nothing recorded after a kickoff is counted, so these are out-of-sample results rather than a re-run of the model over known results.',
@@ -184,6 +204,43 @@ export async function GET(request: Request) {
       error: error instanceof Error ? error.message : 'Prediction snapshots could not be scored.',
     }, { status: 500, headers: { 'Cache-Control': 'no-store' } });
   }
+}
+
+function compareMarket(snapshots: ScoredSnapshot[]) {
+  const matched = snapshots.filter((snapshot) => marketTriple(snapshot) !== null);
+  if (!matched.length) {
+    return { matches: 0, modelBrier: null, marketBrier: null, brierDifference: null, modelLogLoss: null, marketLogLoss: null, logLossDifference: null };
+  }
+  let modelBrier = 0;
+  let marketBrier = 0;
+  let modelLogLoss = 0;
+  let marketLogLoss = 0;
+  for (const snapshot of matched) {
+    const model = triple(snapshot);
+    const market = marketTriple(snapshot)!;
+    const actual = outcomeIndex(snapshot.home_goals, snapshot.away_goals);
+    modelBrier += brierFor(model, actual);
+    marketBrier += brierFor(market, actual);
+    modelLogLoss += -Math.log(Math.max(model[actual], 0.001));
+    marketLogLoss += -Math.log(Math.max(market[actual], 0.001));
+  }
+  const modelBrierMean = modelBrier / matched.length;
+  const marketBrierMean = marketBrier / matched.length;
+  const modelLogLossMean = modelLogLoss / matched.length;
+  const marketLogLossMean = marketLogLoss / matched.length;
+  return {
+    matches: matched.length,
+    modelBrier: round(modelBrierMean, 3),
+    marketBrier: round(marketBrierMean, 3),
+    brierDifference: round(modelBrierMean - marketBrierMean, 3),
+    modelLogLoss: round(modelLogLossMean, 3),
+    marketLogLoss: round(marketLogLossMean, 3),
+    logLossDifference: round(modelLogLossMean - marketLogLossMean, 3),
+  };
+}
+
+function brierFor(probabilities: number[], actual: number) {
+  return probabilities.reduce((sum, probability, outcome) => sum + (probability - (outcome === actual ? 1 : 0)) ** 2, 0);
 }
 
 function score(snapshots: ScoredSnapshot[]) {
@@ -269,6 +326,11 @@ function calibration(snapshots: ScoredSnapshot[]) {
 
 function triple(snapshot: ScoredSnapshot) {
   return [snapshot.home_probability, snapshot.draw_probability, snapshot.away_probability];
+}
+
+function marketTriple(snapshot: ScoredSnapshot) {
+  if (snapshot.market_home_probability === null || snapshot.market_draw_probability === null || snapshot.market_away_probability === null) return null;
+  return [snapshot.market_home_probability, snapshot.market_draw_probability, snapshot.market_away_probability];
 }
 
 function clampWindow(value: unknown) {

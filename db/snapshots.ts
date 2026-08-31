@@ -16,6 +16,10 @@ export type SnapshotRow = {
   expected_away_goals: number;
   over25_probability: number;
   btts_probability: number;
+  market_home_probability: number | null;
+  market_draw_probability: number | null;
+  market_away_probability: number | null;
+  market_bookmakers: number | null;
   training_matches: number;
   created_at: string;
 };
@@ -24,6 +28,13 @@ export type SnapshotRow = {
 // a near-duplicate row every time. A tenth of a percentage point is the
 // smallest change worth keeping.
 const PROBABILITY_EPSILON = 0.001;
+
+export type SnapshotMarket = {
+  home: number;
+  draw: number;
+  away: number;
+  bookmakers: number;
+} | null;
 
 export async function readLatestSnapshot(db: D1Database, fixtureId: number, modelVersion = MODEL_VERSION) {
   return db
@@ -34,34 +45,45 @@ export async function readLatestSnapshot(db: D1Database, fixtureId: number, mode
 
 // Records a forecast made before kickoff. Returns false when an equivalent
 // forecast is already the latest one held for the fixture.
-export async function writeSnapshot(db: D1Database, fixture: FixtureRow, prediction: ModelOutput, trainingMatches: number) {
+export async function writeSnapshot(db: D1Database, fixture: FixtureRow, prediction: ModelOutput, trainingMatches: number, market: SnapshotMarket) {
   const probabilities = {
     home: prediction.probabilities.home / 100,
     draw: prediction.probabilities.draw / 100,
     away: prediction.probabilities.away / 100,
   };
   const previous = await readLatestSnapshot(db, fixture.id);
-  if (previous && unchanged(previous, probabilities)) return false;
+  if (previous && unchanged(previous, probabilities, market)) return false;
 
   await db.prepare(`
     INSERT INTO prediction_snapshots (
       fixture_id, competition_id, season, kickoff, model_name, model_version,
       home_probability, draw_probability, away_probability,
       expected_home_goals, expected_away_goals, over25_probability, btts_probability,
+      market_home_probability, market_draw_probability, market_away_probability, market_bookmakers,
       training_matches, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     fixture.id, fixture.competition_id, fixture.season, fixture.kickoff, MODEL_NAME, MODEL_VERSION,
     probabilities.home, probabilities.draw, probabilities.away,
     prediction.expectedGoals.home, prediction.expectedGoals.away,
     prediction.markets.over25 / 100, prediction.markets.btts / 100,
+    market?.home ?? null, market?.draw ?? null, market?.away ?? null, market?.bookmakers ?? null,
     trainingMatches, new Date().toISOString(),
   ).run();
   return true;
 }
 
-function unchanged(previous: SnapshotRow, probabilities: { home: number; draw: number; away: number }) {
+function unchanged(previous: SnapshotRow, probabilities: { home: number; draw: number; away: number }, market: SnapshotMarket) {
   return Math.abs(previous.home_probability - probabilities.home) < PROBABILITY_EPSILON
     && Math.abs(previous.draw_probability - probabilities.draw) < PROBABILITY_EPSILON
-    && Math.abs(previous.away_probability - probabilities.away) < PROBABILITY_EPSILON;
+    && Math.abs(previous.away_probability - probabilities.away) < PROBABILITY_EPSILON
+    && sameNullable(previous.market_home_probability, market?.home ?? null)
+    && sameNullable(previous.market_draw_probability, market?.draw ?? null)
+    && sameNullable(previous.market_away_probability, market?.away ?? null)
+    && previous.market_bookmakers === (market?.bookmakers ?? null);
+}
+
+function sameNullable(first: number | null, second: number | null) {
+  if (first === null || second === null) return first === second;
+  return Math.abs(first - second) < PROBABILITY_EPSILON;
 }

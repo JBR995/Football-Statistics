@@ -95,6 +95,7 @@ type BaselinePrediction = {
   scorelines?: Array<{ score: string; probability: number }>;
   evidence?: { homeElo: number; awayElo: number; homeMatches: number; awayMatches: number; leagueHomeGoals: number; leagueAwayGoals: number; homeAttack: number; awayAttack: number; homeDefence: number; awayDefence: number };
   validation?: { matches: number; accuracy: number; brier: number | null; logLoss: number | null; methodology: string };
+  market?: { bookmakers: number; overround: number; probabilities: { home: number; draw: number; away: number } } | null;
   confidence?: number;
   sampleWarning?: string;
   error?: string;
@@ -167,6 +168,7 @@ type ForecastRecordFeed = {
   };
   awaitingResult?: number;
   performance?: ForecastScore;
+  marketComparison?: { matches: number; modelBrier: number | null; marketBrier: number | null; brierDifference: number | null; modelLogLoss: number | null; marketLogLoss: number | null; logLossDifference: number | null };
   byCompetition?: Array<ForecastScore & { competitionId: number; competition: string | null }>;
   calibration?: {
     points: number;
@@ -439,6 +441,7 @@ function PredictionDialog({ open, onOpenChange, data, loading }: { open: boolean
 
 function ForecastProbability({ label, value }: { label: string; value: number }) { return <div className="rounded-xl border border-primary/12 bg-primary/[.035] p-4"><div className="mb-3 flex items-center justify-between"><p className="text-xs text-muted-foreground">{label}</p><p className="font-mono text-xl text-primary">{value}%</p></div><Progress value={value} /></div>; }
 function MiniMetric({ label, value }: { label: string; value: string | number }) { return <div className="rounded-lg border border-white/7 bg-black/10 p-3"><p className="font-mono text-sm text-primary">{value}</p><p className="mt-1 text-[10px] text-muted-foreground">{label}</p></div>; }
+function MarketBenchmark({ market }: { market: NonNullable<BaselinePrediction['market']> }) { return <div className="rounded-xl border border-primary/15 bg-primary/[.035] p-4"><div className="mb-3 flex flex-wrap items-baseline justify-between gap-2"><p className="text-sm font-medium">Market benchmark</p><p className="text-[10px] text-muted-foreground">{market.bookmakers} bookmaker{market.bookmakers === 1 ? '' : 's'} · margin removed</p></div><div className="grid grid-cols-3 gap-2"><MiniMetric label="Home" value={`${market.probabilities.home}%`} /><MiniMetric label="Draw" value={`${market.probabilities.draw}%`} /><MiniMetric label="Away" value={`${market.probabilities.away}%`} /></div></div>; }
 
 function MiniNumber({ label, value }: { label: string; value: number }) { return <div><p className="font-mono text-lg">{value}</p><p className="text-[10px] text-muted-foreground">{label}</p></div>; }
 
@@ -507,6 +510,7 @@ function MatchLab({ competitions, selectedLeague, selectedSeason, setSelectedLea
     {intelligenceLoading || loading ? <Card className="border-primary/12 bg-card/75"><CardContent className="flex min-h-72 items-center justify-center gap-3 text-sm text-muted-foreground"><LoaderCircle className="size-5 animate-spin text-primary" /> Building the real match comparison…</CardContent></Card> : !fixture ? <Card className="border-amber-300/15 bg-card/75"><CardContent className="p-6"><p className="font-medium text-amber-100">No stored upcoming fixture is available.</p><p className="mt-2 text-sm text-muted-foreground">Choose another competition or refresh its current-season dataset from Overview.</p></CardContent></Card> : !prediction?.connected || !prediction.probabilities || !prediction.expectedGoals || !prediction.evidence || !prediction.validation ? <Card className="border-amber-300/15 bg-card/75"><CardContent className="p-6"><p className="font-medium text-amber-100">Prediction evidence is unavailable.</p><p className="mt-2 text-sm text-muted-foreground">{prediction?.error ?? 'The model did not return a forecast for this fixture.'}</p></CardContent></Card> : <div className="space-y-4">
       <Card className="relative border-primary/15 bg-card/80 py-0"><div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/80 to-transparent" /><CardHeader className="border-b border-white/8 px-5 py-5 sm:flex-row sm:items-center sm:justify-between"><div><Badge className="mb-2 bg-primary/12 text-primary">{prediction.model?.name}</Badge><CardTitle className="text-xl">{fixture.home.name} vs {fixture.away.name}</CardTitle><p className="mt-1 text-xs text-muted-foreground">{formatKickoff(fixture.kickoff)} · {fixture.venue ?? fixture.round ?? 'Venue to be confirmed'}</p></div><Badge variant="outline" className="mt-3 border-primary/25 text-primary sm:mt-0">{prediction.confidence}% evidence confidence</Badge></CardHeader><CardContent className="grid gap-3 p-5 md:grid-cols-3"><ForecastProbability label={`${fixture.home.name} win`} value={prediction.probabilities.home} /><ForecastProbability label="Draw" value={prediction.probabilities.draw} /><ForecastProbability label={`${fixture.away.name} win`} value={prediction.probabilities.away} /></CardContent></Card>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><SmallStat icon={<Target />} label="Expected goals" value={`${prediction.expectedGoals.home} – ${prediction.expectedGoals.away}`} note={`${fixture.home.name} · ${fixture.away.name}`} /><SmallStat icon={<Zap />} label="Over 2.5" value={`${prediction.markets?.over25 ?? 0}%`} note="Poisson total-goals probability" /><SmallStat icon={<Activity />} label="Both teams score" value={`${prediction.markets?.btts ?? 0}%`} note="BTTS probability" /><SmallStat icon={<Database />} label="Training evidence" value={(prediction.model?.trainingMatches ?? 0).toLocaleString()} note="Earlier fixtures only" /></div>
+      {prediction.market && <MarketBenchmark market={prediction.market} />}
       <div className="grid gap-4 xl:grid-cols-2"><TeamEvidenceCard data={homeAnalysis} side="Home" /><TeamEvidenceCard data={awayAnalysis} side="Away" /></div>
       <div className="grid gap-4 xl:grid-cols-[1.1fr_.9fr]"><Card className="border-white/8 bg-card/75"><CardHeader><CardTitle>Exact-score distribution</CardTitle><p className="text-xs text-muted-foreground">Top outcomes from the current Poisson grid</p></CardHeader><CardContent><ChartContainer config={chartConfig} className="h-[280px] w-full"><BarChart data={scores}><CartesianGrid vertical={false} strokeDasharray="4 4" /><XAxis dataKey="score" axisLine={false} tickLine={false} /><YAxis hide /><ChartTooltip content={<ChartTooltipContent />} /><Bar dataKey="value" radius={[6, 6, 0, 0]}>{scores.map((_, index) => <Cell key={index} fill={index === 0 ? 'var(--color-chart-1)' : 'var(--color-chart-3)'} opacity={1 - index * .1} />)}</Bar></BarChart></ChartContainer></CardContent></Card><Card className="border-white/8 bg-card/75"><CardHeader><CardTitle>Model evidence</CardTitle><p className="text-xs text-muted-foreground">Auditable inputs available before kickoff</p></CardHeader><CardContent className="space-y-3"><div className="grid grid-cols-2 gap-2"><MiniMetric label={`${fixture.home.name} Elo`} value={prediction.evidence.homeElo} /><MiniMetric label={`${fixture.away.name} Elo`} value={prediction.evidence.awayElo} /><MiniMetric label="Home attack index" value={prediction.evidence.homeAttack} /><MiniMetric label="Away attack index" value={prediction.evidence.awayAttack} /><MiniMetric label="Backtest matches" value={prediction.validation.matches} /><MiniMetric label="Brier score" value={prediction.validation.brier ?? '—'} /></div><div className="rounded-xl border border-amber-300/15 bg-amber-300/[.035] p-4 text-xs leading-5 text-muted-foreground"><ShieldCheck className="mb-2 size-4 text-amber-100" />{prediction.sampleWarning}</div><p className="text-[10px] leading-4 text-muted-foreground">Line-up and injury effects are shown in Live Centre when the provider releases them; they are not invented or backfilled here.</p></CardContent></Card></div>
       {matchAnalysis?.h2h?.length ? <Card className="border-white/8 bg-card/75"><CardHeader><CardTitle>Previous meetings</CardTitle><p className="text-xs text-muted-foreground">Stored head-to-head results before this kickoff</p></CardHeader><CardContent className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">{matchAnalysis.h2h.slice(0, 6).map((meeting) => <div key={meeting.id} className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 rounded-xl border border-white/7 p-3 text-sm"><span className="truncate">{meeting.home_name}</span><span className="font-mono text-primary">{meeting.home_goals}–{meeting.away_goals}</span><span className="truncate text-right">{meeting.away_name}</span></div>)}</CardContent></Card> : null}
@@ -804,9 +808,9 @@ function ForecastRecord() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ withinDays: 14 }),
       });
-      const result = await response.json() as { connected: boolean; scanned?: number; stored?: number; unchanged?: number; error?: string };
+      const result = await response.json() as { connected: boolean; scanned?: number; stored?: number; withMarket?: number; unchanged?: number; error?: string };
       setNotice(result.connected
-        ? `${result.stored ?? 0} new forecast${result.stored === 1 ? '' : 's'} recorded from ${result.scanned ?? 0} upcoming fixture${result.scanned === 1 ? '' : 's'}; ${result.unchanged ?? 0} unchanged.`
+        ? `${result.stored ?? 0} new forecast${result.stored === 1 ? '' : 's'} recorded from ${result.scanned ?? 0} upcoming fixture${result.scanned === 1 ? '' : 's'}; ${result.withMarket ?? 0} include a market benchmark and ${result.unchanged ?? 0} were unchanged.`
         : result.error ?? 'Forecasts could not be recorded.');
     } catch { setNotice('Forecasts could not be recorded.'); }
     finally { setRecording(false); await load(); }
@@ -855,6 +859,16 @@ function ForecastRecord() {
               <MiniMetric label="Brier score" value={performance.brier ?? '—'} />
               <MiniMetric label="Log loss" value={performance.logLoss ?? '—'} />
               <MiniMetric label="Calibration error" value={calibration?.expectedCalibrationError ?? '—'} />
+            </div>
+
+            <div className="rounded-xl border border-primary/15 bg-primary/[.035] p-4">
+              <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2"><p className="text-sm font-medium">Model versus market</p><p className="text-[10px] text-muted-foreground">Same fixtures, lower score wins</p></div>
+              {feed.marketComparison?.matches ? <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <MiniMetric label="Market-matched fixtures" value={feed.marketComparison.matches} />
+                <MiniMetric label="Model Brier" value={feed.marketComparison.modelBrier ?? '—'} />
+                <MiniMetric label="Market Brier" value={feed.marketComparison.marketBrier ?? '—'} />
+                <MiniMetric label="Model minus market" value={feed.marketComparison.brierDifference === null ? '—' : `${feed.marketComparison.brierDifference > 0 ? '+' : ''}${feed.marketComparison.brierDifference}`} />
+              </div> : <p className="text-xs leading-5 text-muted-foreground">Market probabilities are now captured with new pre-kickoff forecasts. This comparison fills in after those fixtures settle; historical odds were not available from the provider.</p>}
             </div>
 
             <div className="grid gap-4 xl:grid-cols-[1.05fr_.95fr]">
