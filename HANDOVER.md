@@ -37,6 +37,11 @@ ingestion path.
   immutable pre-kickoff forecasts. Forecasts are recorded in 12 bounded
   competition calls so the hosted worker does not time out on the full set;
   each call retries transient failures three times.
+- The current-data automation runs at 07:00, 18:00 and 23:00 Europe/London.
+  Open dashboard tabs re-read stored standings every five minutes and whenever
+  the tab regains focus; the interface shows the database's actual sync time.
+- Prediction, team and match dialogs override the starter component's narrow
+  responsive cap and scroll within the viewport instead of clipping columns.
 
 ---
 
