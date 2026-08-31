@@ -17,6 +17,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
+const COMPETITIONS = [39, 40, 41, 42, 61, 140, 78, 135, 88, 2, 3, 848];
+
 const { values } = parseArgs({
   options: {
     site: { type: 'string' },
@@ -69,11 +71,18 @@ await run(join(scripts, 'import-match-detail.mjs'), [
 ]);
 
 if (!values['dry-run']) {
-  const body = await recordForecasts();
-  console.log(`${body.stored} forecasts stored, ${body.withMarket ?? 0} with a market benchmark, ${body.unchanged} unchanged.`);
+  const totals = { stored: 0, withMarket: 0, unchanged: 0 };
+  for (const competition of COMPETITIONS) {
+    const body = await recordForecasts(competition);
+    totals.stored += body.stored ?? 0;
+    totals.withMarket += body.withMarket ?? 0;
+    totals.unchanged += body.unchanged ?? 0;
+    console.log(`Competition ${competition}: ${body.stored ?? 0} forecasts stored, ${body.withMarket ?? 0} with a market benchmark, ${body.unchanged ?? 0} unchanged.`);
+  }
+  console.log(`${totals.stored} forecasts stored, ${totals.withMarket} with a market benchmark, ${totals.unchanged} unchanged across all competitions.`);
 }
 
-async function recordForecasts() {
+async function recordForecasts(competition) {
   let lastError;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
@@ -83,7 +92,7 @@ async function recordForecasts() {
           'Content-Type': 'application/json',
           'OAI-Sites-Authorization': `Bearer ${siteToken}`,
         },
-        body: JSON.stringify({ withinDays }),
+        body: JSON.stringify({ competitions: [competition], withinDays }),
       });
       const body = await response.json().catch(() => null);
       if (response.ok && body?.connected) return body;
@@ -92,7 +101,7 @@ async function recordForecasts() {
       lastError = error;
     }
     if (attempt < 3) {
-      console.warn(`Snapshot request failed on attempt ${attempt}; retrying.`);
+      console.warn(`Snapshot request for competition ${competition} failed on attempt ${attempt}; retrying.`);
       await sleep(attempt * 2_000);
     }
   }

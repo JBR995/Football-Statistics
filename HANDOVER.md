@@ -34,8 +34,9 @@ ingestion path.
   after 235 provider calls; 109 fixtures had no currently published prices.
 - `scripts/refresh-current.mjs` is the unattended entry point. It refreshes the
   active season, imports near-term odds under a 600-call ceiling, and records
-  immutable pre-kickoff forecasts. Its final network call retries transient
-  failures three times.
+  immutable pre-kickoff forecasts. Forecasts are recorded in 12 bounded
+  competition calls so the hosted worker does not time out on the full set;
+  each call retries transient failures three times.
 
 ---
 
