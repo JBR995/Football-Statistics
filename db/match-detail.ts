@@ -39,6 +39,14 @@ export type LineupPlayer = {
   grid: string | null;
 };
 
+export type PlayerInjury = {
+  teamId: number;
+  playerId: number | null;
+  playerName: string;
+  injuryType: string | null;
+  reason: string | null;
+};
+
 export type BookmakerOdds = {
   bookmakerId: number;
   bookmaker: string;
@@ -56,6 +64,8 @@ export type MatchDetail = {
   statistics: TeamStatistics[];
   lineups: TeamLineup[];
   odds: BookmakerOdds[];
+  injuries: PlayerInjury[];
+  observed: Array<'lineups' | 'injuries'>;
 };
 
 const BATCH_SIZE = 75;
@@ -104,11 +114,25 @@ export function oddsStatements(db: D1Database, fixtureId: number, odds: Bookmake
 
 export async function storeMatchDetail(db: D1Database, details: MatchDetail[]) {
   const updatedAt = new Date().toISOString();
+  const kickoffRows = details.length ? (await db
+    .prepare(`SELECT id, kickoff FROM fixtures WHERE id IN (${details.map(() => '?').join(', ')})`)
+    .bind(...details.map((detail) => detail.fixtureId))
+    .all<{ id: number; kickoff: string }>()).results : [];
+  const kickoffs = new Map(kickoffRows.map((row) => [row.id, row.kickoff]));
+  const availability = details.filter((detail) => detail.observed.length && updatedAt < (kickoffs.get(detail.fixtureId) ?? ''));
   const statements = details.flatMap((detail) => [
     ...statisticsStatements(db, detail.fixtureId, detail.statistics, updatedAt),
     ...lineupStatements(db, detail.fixtureId, detail.lineups, updatedAt),
     ...oddsStatements(db, detail.fixtureId, detail.odds, updatedAt),
-  ]);
+  ]).concat(availability.map((detail) => db.prepare(`
+    INSERT INTO fixture_availability_snapshots (fixture_id, lineups, injuries, captured_at)
+    VALUES (?, ?, ?, ?)
+  `).bind(
+    detail.fixtureId,
+    JSON.stringify(detail.observed.includes('lineups') ? detail.lineups : []),
+    JSON.stringify(detail.observed.includes('injuries') ? detail.injuries : []),
+    updatedAt,
+  )));
   for (let index = 0; index < statements.length; index += BATCH_SIZE) {
     await db.batch(statements.slice(index, index + BATCH_SIZE));
   }
@@ -117,6 +141,8 @@ export async function storeMatchDetail(db: D1Database, details: MatchDetail[]) {
     statistics: details.reduce((sum, detail) => sum + detail.statistics.length, 0),
     lineups: details.reduce((sum, detail) => sum + detail.lineups.length, 0),
     odds: details.reduce((sum, detail) => sum + detail.odds.length, 0),
+    injuries: details.reduce((sum, detail) => sum + detail.injuries.length, 0),
+    availabilitySnapshots: availability.length,
   };
 }
 

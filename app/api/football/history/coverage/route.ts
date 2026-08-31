@@ -7,7 +7,12 @@ import { getCompetition } from '@/lib/competitions';
 // database rather than an assumption about it.
 
 const COMPLETED = `f.status IN ('FT', 'AET', 'PEN')`;
-const CLASSES = { statistics: 'fixture_statistics', lineups: 'fixture_lineups', odds: 'fixture_odds' } as const;
+const CLASSES = {
+  statistics: 'fixture_statistics',
+  lineups: 'fixture_lineups',
+  injuries: 'fixture_availability_snapshots',
+  odds: 'fixture_odds',
+} as const;
 const DEFAULT_MISSING_LIMIT = 200;
 const MAX_MISSING_LIMIT = 1000;
 
@@ -19,6 +24,7 @@ type CoverageRow = {
   completed: number;
   with_statistics: number;
   with_lineups: number;
+  with_availability: number;
   with_odds: number;
 };
 
@@ -36,11 +42,13 @@ export async function GET(request: Request) {
              SUM(CASE WHEN ${COMPLETED} THEN 1 ELSE 0 END) AS completed,
              SUM(CASE WHEN ${COMPLETED} AND st.fixture_id IS NOT NULL THEN 1 ELSE 0 END) AS with_statistics,
              SUM(CASE WHEN ${COMPLETED} AND lu.fixture_id IS NOT NULL THEN 1 ELSE 0 END) AS with_lineups,
+             SUM(CASE WHEN av.fixture_id IS NOT NULL THEN 1 ELSE 0 END) AS with_availability,
              SUM(CASE WHEN od.fixture_id IS NOT NULL THEN 1 ELSE 0 END) AS with_odds
       FROM fixtures f
       JOIN competitions c ON c.id = f.competition_id AND c.season = f.season
       LEFT JOIN (SELECT DISTINCT fixture_id FROM fixture_statistics) st ON st.fixture_id = f.id
       LEFT JOIN (SELECT DISTINCT fixture_id FROM fixture_lineups) lu ON lu.fixture_id = f.id
+      LEFT JOIN (SELECT DISTINCT fixture_id FROM fixture_availability_snapshots) av ON av.fixture_id = f.id
       LEFT JOIN (SELECT DISTINCT fixture_id FROM fixture_odds) od ON od.fixture_id = f.id
       GROUP BY f.competition_id, f.season
       ORDER BY MAX(c.name), f.season DESC
@@ -54,10 +62,11 @@ export async function GET(request: Request) {
       completed: Number(row.completed),
       statistics: Number(row.with_statistics),
       lineups: Number(row.with_lineups),
+      availability: Number(row.with_availability),
       odds: Number(row.with_odds),
     }));
 
-    const total = (key: 'completed' | 'fixtures' | 'statistics' | 'lineups' | 'odds') =>
+    const total = (key: 'completed' | 'fixtures' | 'statistics' | 'lineups' | 'availability' | 'odds') =>
       seasons.reduce((sum, season) => sum + season[key], 0);
 
     return Response.json({
@@ -71,6 +80,7 @@ export async function GET(request: Request) {
         // odds are quoted for every fixture, so each has its own denominator.
         statistics: { stored: total('statistics'), of: total('completed') },
         lineups: { stored: total('lineups'), of: total('completed') },
+        availability: { stored: total('availability'), of: total('fixtures') },
         odds: { stored: total('odds'), of: total('fixtures') },
       },
       checkedAt: new Date().toISOString(),
@@ -100,14 +110,17 @@ async function listMissing(db: D1Database, missing: string, params: URLSearchPar
   const requestedLimit = Number(params.get('limit'));
   const limit = Number.isInteger(requestedLimit) && requestedLimit > 0 ? Math.min(requestedLimit, MAX_MISSING_LIMIT) : DEFAULT_MISSING_LIMIT;
 
-  // Odds are quoted before a match, statistics and line-ups only exist after
-  // one, so only the latter two are restricted to completed fixtures.
-  const playedOnly = missing === 'odds' ? '' : `AND ${COMPLETED}`;
+  // Statistics only exist after the match. Line-ups and injuries are queried
+  // before kickoff; repeat=true asks for a fresh immutable observation even
+  // when an earlier capture exists.
+  const playedOnly = missing === 'statistics' ? `AND ${COMPLETED}` : '';
+  const repeat = params.get('repeat') === 'true' && (missing === 'lineups' || missing === 'injuries');
+  const absent = repeat ? '' : `AND NOT EXISTS (SELECT 1 FROM ${table} d WHERE d.fixture_id = f.id)`;
   const rows = (await db.prepare(`
     SELECT f.id, f.kickoff
     FROM fixtures f
     WHERE f.competition_id = ? AND f.season = ? ${playedOnly}
-      AND NOT EXISTS (SELECT 1 FROM ${table} d WHERE d.fixture_id = f.id)
+      ${absent}
     ORDER BY f.kickoff ASC
     LIMIT ?
   `).bind(league, season, limit).all<{ id: number; kickoff: string }>()).results;
@@ -116,7 +129,7 @@ async function listMissing(db: D1Database, missing: string, params: URLSearchPar
     SELECT COUNT(*) AS count
     FROM fixtures f
     WHERE f.competition_id = ? AND f.season = ? ${playedOnly}
-      AND NOT EXISTS (SELECT 1 FROM ${table} d WHERE d.fixture_id = f.id)
+      ${absent}
   `).bind(league, season).first<{ count: number }>())?.count ?? 0;
 
   return Response.json({

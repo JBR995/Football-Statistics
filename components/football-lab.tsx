@@ -123,11 +123,13 @@ type ModelEvaluationFeed = {
   connected: boolean;
   model?: { name: string; version: string; usesFutureData: boolean };
   summary?: { competitions: number; trainingMatches: number; validationMatches: number; accuracy: number | null; brier: number | null; logLoss: number | null };
-  evaluations?: Array<{ competitionId: number; competition: string; latestSeason: number; trainingMatches: number; seasons: number; trainedThrough: string | null; validation: { matches: number; accuracy: number; brier: number | null; logLoss: number | null; methodology: string } }>;
+  evaluations?: Array<{ competitionId: number; competition: string; latestSeason: number; trainingMatches: number; seasons: number; trainedThrough: string | null; validation: ModelValidation; baselineV1: ModelValidation }>;
+  comparison?: { matches: number; entries: Array<{ name: string; version: string; accuracy: number | null; brier: number | null; logLoss: number | null }> };
   methodology?: string;
   checkedAt?: string;
   error?: string;
 };
+type ModelValidation = { matches: number; accuracy: number; brier: number | null; logLoss: number | null; methodology: string };
 
 const FIXTURE_COMPETITIONS = [
   { id: 39, name: 'Premier League', season: 2026 },
@@ -153,6 +155,7 @@ type DetailCoverageFeed = {
     completed: number;
     statistics: { stored: number; of: number };
     lineups: { stored: number; of: number };
+    availability: { stored: number; of: number };
     odds: { stored: number; of: number };
   };
   error?: string;
@@ -169,8 +172,12 @@ type ForecastRecordFeed = {
   awaitingResult?: number;
   performance?: ForecastScore;
   marketComparison?: { matches: number; modelBrier: number | null; marketBrier: number | null; brierDifference: number | null; modelLogLoss: number | null; marketLogLoss: number | null; logLossDifference: number | null };
+  identicalFixtureComparison?: { matches: number; entries: Array<{ key: string; name: string; version: string | null; brier: number; logLoss: number }> };
   byCompetition?: Array<ForecastScore & { competitionId: number; competition: string | null }>;
   calibration?: {
+    eligible: boolean;
+    settledFixtures: number;
+    minimumFixtures: number;
     points: number;
     expectedCalibrationError: number | null;
     bins: Array<{ from: number; to: number; count: number; predicted: number; observed: number }>;
@@ -771,8 +778,10 @@ function readinessRows(coverage: DetailCoverageFeed | null) {
     },
     {
       label: 'Injuries, suspensions and events',
-      state: 'Live only',
-      copy: 'Not stored. Injuries are reported as a current state rather than a historical record, so a match-time snapshot has to be captured before kickoff to be usable.',
+      state: stored(summary?.availability?.stored) ? 'Stored' : 'Live only',
+      copy: stored(summary?.availability?.stored)
+        ? `Immutable pre-kickoff line-up and injury observations exist for ${share(summary?.availability?.stored, summary?.availability?.of)}. New observations are captured by the current-data refresh.`
+        : 'Injuries are a current state, so the current-data refresh captures immutable line-up and injury observations before kickoff.',
     },
   ];
 }
@@ -791,9 +800,10 @@ function Models() {
   useEffect(() => { void load(); }, []);
   const summary = feed?.summary;
   const chartData = (feed?.evaluations ?? []).map((evaluation) => ({ competition: shortCompetition(evaluation.competition), value: evaluation.validation.accuracy }));
-  return <><Intro eyebrow="Leakage-safe validation" title="Model laboratory" copy="Review the real Elo and Bayesian-Poisson baseline against unseen matches. Every displayed score is recalculated from stored competition history." action={<Button variant="outline" onClick={() => void load()} disabled={loading}><RefreshCw className={loading ? 'animate-spin' : ''} /> Recalculate</Button>} />
+  return <><Intro eyebrow="Leakage-safe validation" title="Model laboratory" copy="Compare Baseline v1 with the Dixon–Coles, time-decayed Baseline v2 on identical unseen fixtures. Every score is recalculated from stored competition history." action={<Button variant="outline" onClick={() => void load()} disabled={loading}><RefreshCw className={loading ? 'animate-spin' : ''} /> Recalculate</Button>} />
     {loading && !feed ? <Card className="border-primary/12 bg-card/75"><CardContent className="flex min-h-72 items-center justify-center gap-3 text-sm text-muted-foreground"><LoaderCircle className="size-5 animate-spin text-primary" /> Running walk-forward evaluation…</CardContent></Card> : !feed?.connected || !summary ? <Card className="border-amber-300/15 bg-card/75"><CardContent className="p-6"><p className="font-medium text-amber-100">Model evaluation is unavailable.</p><p className="mt-2 text-sm text-muted-foreground">{feed?.error ?? 'No completed match history is available.'}</p></CardContent></Card> : <div className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5"><SmallStat icon={<Database />} label="Training matches" value={summary.trainingMatches.toLocaleString()} note={`${summary.competitions} competitions`} /><SmallStat icon={<ShieldCheck />} label="Validation matches" value={summary.validationMatches.toLocaleString()} note="Walk-forward holdouts" /><SmallStat icon={<Target />} label="Outcome accuracy" value={summary.accuracy === null ? '—' : `${summary.accuracy}%`} note="Highest-probability result" /><SmallStat icon={<Gauge />} label="Brier score" value={summary.brier?.toFixed(3) ?? '—'} note="Lower is better" /><SmallStat icon={<LineIcon />} label="Log loss" value={summary.logLoss?.toFixed(3) ?? '—'} note="Probability quality" /></div>
+      {Boolean(feed.comparison?.entries.length) && <Card className="border-primary/15 bg-primary/[.035]"><CardHeader><CardTitle>Baseline v1 vs Baseline v2</CardTitle><p className="text-xs text-muted-foreground">Same {feed.comparison?.matches.toLocaleString()} walk-forward fixtures; lower Brier and log loss are better.</p></CardHeader><CardContent className="overflow-x-auto"><table className="w-full min-w-[560px] text-left text-sm"><thead className="border-y border-white/8 text-[10px] uppercase tracking-[.12em] text-muted-foreground"><tr>{['Model', 'Version', 'Accuracy', 'Brier', 'Log loss'].map((head) => <th key={head} className="px-3 py-3 font-medium">{head}</th>)}</tr></thead><tbody>{feed.comparison?.entries.map((entry) => <tr key={entry.version} className="border-b border-white/6"><td className="px-3 py-3 font-medium">{entry.name}</td><td className="px-3 font-mono text-xs">{entry.version}</td><td className="px-3 font-mono text-xs">{entry.accuracy === null ? '—' : `${entry.accuracy}%`}</td><td className="px-3 font-mono text-primary">{entry.brier ?? '—'}</td><td className="px-3 font-mono text-xs">{entry.logLoss ?? '—'}</td></tr>)}</tbody></table></CardContent></Card>}
       <div className="grid gap-4 xl:grid-cols-[.9fr_1.1fr]"><Card className="border-white/8 bg-card/75"><CardHeader><CardTitle>Accuracy by competition</CardTitle><p className="text-xs text-muted-foreground">Descriptive only; calibration metrics remain the primary model check.</p></CardHeader><CardContent><ChartContainer config={chartConfig} className="h-[320px] w-full"><BarChart data={chartData} layout="vertical"><CartesianGrid horizontal={false} strokeDasharray="4 4" /><XAxis type="number" domain={[0, 100]} hide /><YAxis type="category" dataKey="competition" width={100} axisLine={false} tickLine={false} /><ChartTooltip content={<ChartTooltipContent />} /><Bar dataKey="value" fill="var(--color-chart-1)" radius={[0, 6, 6, 0]} /></BarChart></ChartContainer></CardContent></Card><Card className="border-white/8 bg-card/75"><CardHeader><CardTitle>Evaluation ledger</CardTitle><p className="text-xs text-muted-foreground">Current stored history and out-of-sample performance</p></CardHeader><CardContent className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-sm"><thead className="border-y border-white/8 text-[10px] uppercase tracking-[.12em] text-muted-foreground"><tr>{['Competition', 'Seasons', 'Training', 'Validation', 'Accuracy', 'Brier', 'Log loss'].map((head) => <th key={head} className="px-3 py-3 font-medium">{head}</th>)}</tr></thead><tbody>{feed.evaluations?.map((evaluation) => <tr key={evaluation.competitionId} className="border-b border-white/6"><td className="px-3 py-3 font-medium">{evaluation.competition}</td><td className="px-3 font-mono text-xs">{evaluation.seasons}</td><td className="px-3 font-mono text-xs">{evaluation.trainingMatches.toLocaleString()}</td><td className="px-3 font-mono text-xs">{evaluation.validation.matches}</td><td className="px-3 font-mono text-primary">{evaluation.validation.accuracy}%</td><td className="px-3 font-mono text-xs">{evaluation.validation.brier ?? '—'}</td><td className="px-3 font-mono text-xs">{evaluation.validation.logLoss ?? '—'}</td></tr>)}</tbody></table></CardContent></Card></div>
       <div className="rounded-xl border border-primary/15 bg-primary/[.04] p-4 text-xs leading-5 text-muted-foreground"><ShieldCheck className="mb-2 size-4 text-primary" />{feed.methodology} Accuracy is not used alone: Brier score and log loss measure whether the probabilities themselves are trustworthy.</div>
     </div>}
@@ -878,16 +888,11 @@ function ForecastRecord() {
             </div>
 
             <div className="rounded-xl border border-primary/15 bg-primary/[.035] p-4">
-              <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2"><p className="text-sm font-medium">Model versus market</p><p className="text-[10px] text-muted-foreground">Same fixtures, lower score wins</p></div>
-              {feed.marketComparison?.matches ? <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                <MiniMetric label="Market-matched fixtures" value={feed.marketComparison.matches} />
-                <MiniMetric label="Model Brier" value={feed.marketComparison.modelBrier ?? '—'} />
-                <MiniMetric label="Market Brier" value={feed.marketComparison.marketBrier ?? '—'} />
-                <MiniMetric label="Model minus market" value={feed.marketComparison.brierDifference === null ? '—' : `${feed.marketComparison.brierDifference > 0 ? '+' : ''}${feed.marketComparison.brierDifference}`} />
-              </div> : <p className="text-xs leading-5 text-muted-foreground">Market probabilities are now captured with new pre-kickoff forecasts. This comparison fills in after those fixtures settle; historical odds were not available from the provider.</p>}
+              <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2"><p className="text-sm font-medium">V1 vs v2 vs market</p><p className="text-[10px] text-muted-foreground">Identical fixtures only; lower score wins</p></div>
+              {feed.identicalFixtureComparison?.matches ? <><p className="mb-3 text-[11px] text-muted-foreground">{feed.identicalFixtureComparison.matches} fixtures have both model forecasts and bookmaker probabilities.</p><div className="grid gap-3 sm:grid-cols-3">{feed.identicalFixtureComparison.entries.map((entry) => <div key={entry.key} className="rounded-lg border border-white/7 p-3"><p className="text-xs font-medium">{entry.name}</p><p className="mt-2 font-mono text-lg text-primary">{entry.brier.toFixed(3)}</p><p className="text-[10px] text-muted-foreground">Brier · {entry.logLoss.toFixed(3)} log loss</p></div>)}</div></> : <p className="text-xs leading-5 text-muted-foreground">This comparison begins after fixtures carrying v1, v2 and market probabilities settle. Historical odds were not available from the provider.</p>}
             </div>
 
-            <div className="grid gap-4 xl:grid-cols-[1.05fr_.95fr]">
+            {!calibration?.eligible ? <p className="rounded-xl border border-white/7 bg-white/[.02] p-4 text-xs leading-5 text-muted-foreground">Calibration unlocks after {calibration?.minimumFixtures ?? 50} Baseline v2 forecasts settle. {calibration?.settledFixtures ?? performance.matches} have settled so far; the chart is withheld to avoid presenting noise as evidence.</p> : <div className="grid gap-4 xl:grid-cols-[1.05fr_.95fr]">
               <div className="rounded-xl border border-white/7 bg-white/[.02] p-4">
                 <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
                   <p className="text-sm font-medium">Reliability</p>
@@ -929,7 +934,7 @@ function ForecastRecord() {
                   </tr>)}</tbody>
                 </table>
               </div>
-            </div>
+            </div>}
 
             {Boolean(feed.byCompetition?.length) && <div className="overflow-x-auto rounded-xl border border-white/7">
               <table className="w-full min-w-[640px] text-left text-sm">

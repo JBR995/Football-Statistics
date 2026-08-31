@@ -110,6 +110,16 @@ export const fixtureLineups = sqliteTable('fixture_lineups', {
   index('idx_fixture_lineups_fixture').on(table.fixtureId),
 ]);
 
+export const fixtureAvailabilitySnapshots = sqliteTable('fixture_availability_snapshots', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  fixtureId: integer('fixture_id').notNull(),
+  lineups: text('lineups').notNull(),
+  injuries: text('injuries').notNull(),
+  capturedAt: text('captured_at').notNull(),
+}, (table) => [
+  index('idx_fixture_availability_fixture_captured').on(table.fixtureId, table.capturedAt),
+]);
+
 export const fixtureOdds = sqliteTable('fixture_odds', {
   fixtureId: integer('fixture_id').notNull(),
   bookmakerId: integer('bookmaker_id').notNull(),

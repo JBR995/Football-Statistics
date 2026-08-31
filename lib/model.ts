@@ -132,12 +132,12 @@ export function predict(target: FixtureRow, context: ModelContext): ModelOutput 
   };
 }
 
-export function backtest(history: FixtureRow[]) {
+export function backtest(history: FixtureRow[], maximumMatches = 100) {
   let correct = 0;
   let brier = 0;
   let logLoss = 0;
   let matches = 0;
-  const validationStart = Math.max(20, history.length - 100);
+  const validationStart = Math.max(20, history.length - maximumMatches);
   for (let index = validationStart; index < history.length; index++) {
     const target = history[index];
     const output = modelPrediction(target, history.slice(0, index));

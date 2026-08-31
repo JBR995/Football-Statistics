@@ -1,5 +1,5 @@
 import { ensureFootballSchema } from '@/db/football';
-import { readKnownFixtures, storeMatchDetail, type BookmakerOdds, type LineupPlayer, type MatchDetail, type TeamLineup, type TeamStatistics } from '@/db/match-detail';
+import { readKnownFixtures, storeMatchDetail, type BookmakerOdds, type LineupPlayer, type MatchDetail, type PlayerInjury, type TeamLineup, type TeamStatistics } from '@/db/match-detail';
 
 // Per-match detail collected by a local importer: shot and possession counts,
 // line-ups, and bookmaker prices. Like the season upload, the provider call
@@ -12,6 +12,7 @@ const MAX_FIXTURES = 50;
 const MAX_TEAMS = 2;
 const MAX_BOOKMAKERS = 30;
 const MAX_PLAYERS = 30;
+const MAX_INJURIES = 80;
 const MAX_COUNT = 500;
 const MIN_ODDS = 1.01;
 const MAX_ODDS = 1000;
@@ -66,6 +67,9 @@ function parseDetail(entry: unknown, index: number): MatchDetail | string {
   const statistics: TeamStatistics[] = [];
   const lineups: TeamLineup[] = [];
   const odds: BookmakerOdds[] = [];
+  const injuries: PlayerInjury[] = [];
+  const observed = parseObserved(row.observed);
+  if (typeof observed === 'string') return `${at} ${observed}`;
 
   if (row.statistics !== undefined && row.statistics !== null) {
     if (!Array.isArray(row.statistics) || row.statistics.length > MAX_TEAMS) return `${at} must carry statistics for at most ${MAX_TEAMS} teams.`;
@@ -94,12 +98,46 @@ function parseDetail(entry: unknown, index: number): MatchDetail | string {
     }
   }
 
-  if (!statistics.length && !lineups.length && !odds.length) return `${at} carries no statistics, line-ups or odds.`;
+  if (row.injuries !== undefined && row.injuries !== null) {
+    if (!Array.isArray(row.injuries) || row.injuries.length > MAX_INJURIES) return `${at} must carry at most ${MAX_INJURIES} injuries.`;
+    for (const item of row.injuries) {
+      const parsed = parseInjury(item, at);
+      if (typeof parsed === 'string') return parsed;
+      injuries.push(parsed);
+    }
+  }
+
+  if (!statistics.length && !lineups.length && !odds.length && !injuries.length && !observed.length) return `${at} carries no statistics, line-ups, injuries or odds.`;
   if (duplicateTeams(statistics)) return `${at} repeats a team in its statistics.`;
   if (duplicateTeams(lineups)) return `${at} repeats a team in its line-ups.`;
   if (new Set(odds.map((book) => book.bookmakerId)).size !== odds.length) return `${at} repeats a bookmaker.`;
 
-  return { fixtureId, statistics, lineups, odds };
+  return { fixtureId, statistics, lineups, odds, injuries, observed };
+}
+
+function parseObserved(value: unknown): Array<'lineups' | 'injuries'> | string {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) return 'has a malformed observed-class list.';
+  const supported = new Set(['lineups', 'injuries']);
+  const parsed = [...new Set(value.map(String))];
+  if (parsed.some((item) => !supported.has(item))) return 'has an unsupported observed class.';
+  return parsed as Array<'lineups' | 'injuries'>;
+}
+
+function parseInjury(entry: unknown, at: string): PlayerInjury | string {
+  if (!entry || typeof entry !== 'object') return `${at} has a malformed injury entry.`;
+  const row = entry as Record<string, unknown>;
+  const teamId = identifier(row.teamId);
+  if (teamId === null) return `${at} has an injury with an invalid team id.`;
+  const playerName = optionalText(row.playerName, 120);
+  if (!playerName) return `${at} has an injury with no player name.`;
+  return {
+    teamId,
+    playerId: identifier(row.playerId),
+    playerName,
+    injuryType: optionalText(row.injuryType, 80),
+    reason: optionalText(row.reason, 160),
+  };
 }
 
 function parseStatistics(entry: unknown, at: string): TeamStatistics | string {

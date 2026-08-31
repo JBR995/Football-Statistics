@@ -118,7 +118,7 @@ try {
   const record = await api('/api/football/predictions/snapshot?withinDays=30');
   check('coverage is reported', record.body?.coverage?.covered === record.body?.coverage?.upcoming, `${record.body?.coverage?.covered}/${record.body?.coverage?.upcoming} covered`);
   const scoredBefore = record.body?.performance?.matches ?? 0;
-  check('new forecasts await a result', (record.body?.awaitingResult ?? 0) >= firstSnapshot.body?.stored, `${record.body?.awaitingResult} awaiting, ${scoredBefore} already scored from earlier data`);
+  check('new forecasts await a result', (record.body?.awaitingResult ?? 0) >= firstSnapshot.body?.scanned, `${record.body?.awaitingResult} awaiting, ${scoredBefore} already scored from earlier data`);
 
   // Settle the earliest upcoming fixtures and confirm they score.
   const settled = await settleSomeFixtures();
@@ -127,7 +127,7 @@ try {
   const scored = await api('/api/football/predictions/snapshot?withinDays=30');
   const gained = (scored.body?.performance?.matches ?? 0) - scoredBefore;
   check('settled forecasts are scored', gained > 0, `${gained} newly scored (${scored.body?.performance?.matches} total), Brier ${scored.body?.performance?.brier}`);
-  check('a reliability curve is produced', (scored.body?.calibration?.points ?? 0) > 0, `${scored.body?.calibration?.points} points, ECE ${scored.body?.calibration?.expectedCalibrationError}`);
+  check('calibration waits for a sufficient sample', (scored.body?.calibration?.points ?? 0) > 0 && scored.body?.calibration?.eligible === false, `${scored.body?.calibration?.settledFixtures}/${scored.body?.calibration?.minimumFixtures} fixtures settled`);
   check('forecasts predate their kickoffs', (scored.body?.performance?.medianLeadHours ?? 0) > 0, `median lead ${scored.body?.performance?.medianLeadHours}h`);
 
   const windowed = await runScript('scripts/import-match-detail.mjs', [
@@ -136,6 +136,13 @@ try {
     '--within-days', '30', '--budget', '500', '--dry-run', '--retry-empty',
   ]);
   check('recurring detail work is windowed', windowed.code === 0 && windowed.output.includes('in the next 30 days'), windowed.output.trim().split('\n')[0]);
+
+  const availability = await runScript('scripts/import-match-detail.mjs', [
+    '--site', site, '--token', 'dev', '--provider', provider,
+    '--leagues', String(LEAGUE), '--seasons', String(SEASON), '--include', 'lineups,injuries',
+    '--within-days', '30', '--budget', '500', '--batch', '20', '--delay', '0', '--retry-empty',
+  ]);
+  check('pre-kickoff availability imports', availability.code === 0, availability.output.trim().split('\n').filter((line) => line.includes('provider calls')).at(-1));
 
   // --- match detail ---------------------------------------------------------
 
@@ -151,6 +158,7 @@ try {
   check('statistics are stored', (detailRow?.statistics ?? 0) > 0, `${detailRow?.statistics} of ${detailRow?.completed} played matches`);
   check('line-ups are stored', (detailRow?.lineups ?? 0) > 0, `${detailRow?.lineups} matches`);
   check('odds are stored', (detailRow?.odds ?? 0) > 0, `${detailRow?.odds} matches`);
+  check('availability snapshots are stored', (detailRow?.availability ?? 0) > 0, `${detailRow?.availability} fixtures captured before kickoff`);
 
   const odds = await runScript('scripts/import-match-detail.mjs', [
     '--site', site, '--token', 'dev', '--provider', provider,
@@ -164,6 +172,7 @@ try {
   const settledWithMarket = await settleSomeFixtures(20);
   const compared = await api('/api/football/predictions/snapshot?withinDays=30');
   check('model and market are scored together', (compared.body?.marketComparison?.matches ?? 0) > 0, `${compared.body?.marketComparison?.matches} matched results after settling ${settledWithMarket}`);
+  check('v1, v2 and market use identical fixtures', (compared.body?.identicalFixtureComparison?.matches ?? 0) > 0 && compared.body?.identicalFixtureComparison?.entries?.length === 3, `${compared.body?.identicalFixtureComparison?.matches} shared fixtures`);
 
   const withDetail = await api(`/api/football/history/coverage?missing=statistics&league=${LEAGUE}&season=${SEASON}&limit=5`);
   check('outstanding work is listable', typeof withDetail.body?.remaining === 'number', `${withDetail.body?.remaining} fixtures still without statistics`);

@@ -49,6 +49,8 @@ export function createMockProvider(port = 8899) {
         return send({ errors: [], response: statistics(fixture) });
       case '/fixtures/lineups':
         return send({ errors: [], response: lineups(fixture) });
+      case '/injuries':
+        return send({ errors: [], response: injuries(fixture) });
       case '/odds':
         return send({ errors: [], response: odds(fixture) });
       default:
@@ -57,6 +59,15 @@ export function createMockProvider(port = 8899) {
     }
   });
   return new Promise((resolve) => server.listen(port, () => resolve(server)));
+}
+
+function injuries(fixture) {
+  if (fixture % 3) return [];
+  const league = Math.floor(fixture / 10_000_000);
+  return [{
+    team: { id: teamId(league, fixture % TEAMS), name: `Team ${league}-${fixture % TEAMS}` },
+    player: { id: fixture % 100_000, name: `Player ${fixture % 97}`, type: 'Missing Fixture', reason: 'Mock knock' },
+  }];
 }
 
 function season(league, year) {

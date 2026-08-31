@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Backfills per-match detail — shot and possession statistics, line-ups and
-// bookmaker odds — for fixtures already stored in the hosted database.
+// bookmaker odds, and pre-kickoff availability — for fixtures already stored
+// in the hosted database.
 //
 // Like scripts/import-history.mjs, the provider calls run here and only the
 // data is uploaded, because the hosted worker's outbound allowance is spent
@@ -20,7 +21,8 @@
 //   --env-file <path>   File holding API_FOOTBALL_KEY (default .env.local).
 //   --leagues <ids>     Comma-separated competition ids (default: all 12).
 //   --seasons <range>   e.g. 2021-2025 or 2021,2023 (default 2021-2025).
-//   --include <classes> statistics, lineups, odds (default: all three).
+//   --include <classes> statistics, lineups, injuries, odds
+//                       (default: statistics,lineups,odds).
 //   --budget <n>        Maximum provider calls this run (default 1000).
 //   --batch <n>         Fixtures per upload request (default 25, max 50).
 //   --delay <ms>        Pause between provider calls (default 250).
@@ -62,6 +64,7 @@ const COMPETITIONS = [
 const CLASSES = {
   statistics: { path: '/fixtures/statistics', parse: parseStatistics },
   lineups: { path: '/fixtures/lineups', parse: parseLineups },
+  injuries: { path: '/injuries', parse: parseInjuries },
   odds: { path: '/odds', parse: parseOdds },
 };
 
@@ -143,7 +146,7 @@ let outstanding = 0;
 for (const league of leagues) {
   for (const season of seasons) {
     for (const name of include) {
-      const report = await readMissing(name, league, season);
+      const report = await readMissing(name, league, season, withinDays !== null && (name === 'lineups' || name === 'injuries'));
       const fixtures = report.fixtures.filter((fixture) => inWindow(fixture.kickoff));
       outstanding += fixtures.length;
       for (const fixture of fixtures) {
@@ -166,14 +169,14 @@ if (values['dry-run'] || !work.size) process.exit(0);
 
 let calls = 0;
 let uploaded = 0;
-const totals = { statistics: 0, lineups: 0, odds: 0 };
-const empty = { statistics: 0, lineups: 0, odds: 0 };
+const totals = { statistics: 0, lineups: 0, injuries: 0, odds: 0 };
+const empty = { statistics: 0, lineups: 0, injuries: 0, odds: 0 };
 const failures = [];
 let pending = [];
 
 for (const [fixtureId, entry] of work) {
   if (calls >= budget) break;
-  const detail = { fixtureId, statistics: [], lineups: [], odds: [] };
+  const detail = { fixtureId, statistics: [], lineups: [], injuries: [], odds: [], observed: [] };
   let collected = false;
 
   for (const name of entry.classes) {
@@ -181,6 +184,7 @@ for (const [fixtureId, entry] of work) {
     try {
       calls++;
       const parsed = await fetchClass(name, fixtureId);
+      if (name === 'lineups' || name === 'injuries') detail.observed.push(name);
       if (parsed.length) {
         detail[name] = parsed;
         totals[name] += parsed.length;
@@ -189,6 +193,7 @@ for (const [fixtureId, entry] of work) {
         empty[name]++;
         empties.add(`${fixtureId}:${name}`);
       }
+      if (name === 'lineups' || name === 'injuries') collected = true;
     } catch (error) {
       failures.push(`${nameOf(entry.league)} fixture ${fixtureId} ${name}: ${error.message}`);
     }
@@ -201,8 +206,8 @@ for (const [fixtureId, entry] of work) {
 await flush(pending);
 
 console.log(`\n${calls} provider calls, ${uploaded} fixtures uploaded.`);
-console.log(`  statistics rows ${totals.statistics}, line-ups ${totals.lineups}, odds rows ${totals.odds}`);
-console.log(`  provider had nothing for: ${empty.statistics} statistics, ${empty.lineups} line-ups, ${empty.odds} odds`);
+console.log(`  statistics rows ${totals.statistics}, line-ups ${totals.lineups}, injuries ${totals.injuries}, odds rows ${totals.odds}`);
+console.log(`  provider had nothing for: ${empty.statistics} statistics, ${empty.lineups} line-ups, ${empty.injuries} injuries, ${empty.odds} odds`);
 if (failures.length) {
   console.log(`  ${failures.length} failed:`);
   for (const failure of failures.slice(0, 20)) console.log(`    ${failure}`);
@@ -221,7 +226,7 @@ async function flush(details) {
     const body = await response.json().catch(() => null);
     if (!response.ok) throw new Error(body?.error ?? `the site returned ${response.status}`);
     uploaded += body.fixtures ?? details.length;
-    console.log(`  uploaded ${body.fixtures} fixtures (${body.statistics} statistics, ${body.lineups} line-ups, ${body.odds} odds)`);
+    console.log(`  uploaded ${body.fixtures} fixtures (${body.statistics} statistics, ${body.lineups} line-ups, ${body.injuries ?? 0} injuries, ${body.odds} odds, ${body.availabilitySnapshots ?? 0} pre-kickoff snapshots)`);
   } catch (error) {
     failures.push(`upload of ${details.length} fixtures: ${error.message}`);
   }
@@ -333,8 +338,9 @@ function number(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-async function readMissing(name, league, season) {
-  const url = `${site}/api/football/history/coverage?missing=${name}&league=${league}&season=${season}&limit=1000`;
+async function readMissing(name, league, season, repeatable = false) {
+  let url = `${site}/api/football/history/coverage?missing=${name}&league=${league}&season=${season}&limit=1000`;
+  if (repeatable) url += '&repeat=true';
   let response;
   try {
     response = await fetch(url, { headers: { 'OAI-Sites-Authorization': `Bearer ${siteToken}` } });
@@ -373,6 +379,18 @@ async function readProviderKey(path) {
   const value = match?.[1]?.trim().replace(/^['"]|['"]$/g, '');
   if (value) return value;
   return fail(`${path} does not define API_FOOTBALL_KEY.`);
+}
+
+function parseInjuries(response) {
+  return response
+    .filter((entry) => entry?.team?.id && entry?.player?.name)
+    .map((entry) => ({
+      teamId: entry.team.id,
+      playerId: entry.player.id ?? null,
+      playerName: entry.player.name,
+      injuryType: entry.player.type ?? entry.type ?? null,
+      reason: entry.player.reason ?? entry.reason ?? null,
+    }));
 }
 
 function parseSeasons(input) {

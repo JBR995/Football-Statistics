@@ -3,6 +3,7 @@ import { readCompletedHistory, readFixture } from '@/db/fixtures';
 import { readStoredOdds } from '@/db/match-detail-read';
 import { readLatestSnapshot } from '@/db/snapshots';
 import { backtest, MODEL_NAME, MODEL_VERSION, modelPrediction, type FixtureRow } from '@/lib/model';
+import { backtestDixonColes, dixonColesPrediction, MODEL_V2_NAME, MODEL_V2_VERSION } from '@/lib/model-v2';
 
 export async function GET(request: Request) {
   const fixtureId = Number(new URL(request.url).searchParams.get('fixture'));
@@ -22,10 +23,13 @@ export async function GET(request: Request) {
       beforeKickoff: target.kickoff,
     });
 
-    const prediction = modelPrediction(target, history);
-    const validation = backtest(history);
-    const [snapshot, storedOdds] = await Promise.all([
-      readLatestSnapshot(db, fixtureId),
+    const baseline = modelPrediction(target, history);
+    const prediction = dixonColesPrediction(target, history);
+    const validation = backtestDixonColes(history, 60);
+    const baselineValidation = backtest(history, 60);
+    const [snapshot, baselineSnapshot, storedOdds] = await Promise.all([
+      readLatestSnapshot(db, fixtureId, MODEL_V2_VERSION),
+      readLatestSnapshot(db, fixtureId, MODEL_VERSION),
       readStoredOdds(db, fixtureId),
     ]);
     const minimumTeamSample = Math.min(prediction.evidence.homeMatches, prediction.evidence.awayMatches);
@@ -40,8 +44,8 @@ export async function GET(request: Request) {
       connected: true,
       fixture: toFixture(target),
       model: {
-        name: MODEL_NAME,
-        version: MODEL_VERSION,
+        name: MODEL_V2_NAME,
+        version: MODEL_V2_VERSION,
         trainedThrough: history.at(-1)?.kickoff ?? null,
         trainingMatches: history.length,
         usesFutureData: false,
@@ -50,6 +54,11 @@ export async function GET(request: Request) {
       confidence,
       sampleWarning,
       validation,
+      comparison: {
+        baselineV1: { name: MODEL_NAME, version: MODEL_VERSION, probabilities: baseline.probabilities, validation: baselineValidation },
+        baselineV2: { name: MODEL_V2_NAME, version: MODEL_V2_VERSION, probabilities: prediction.probabilities, validation },
+        market: storedOdds.market,
+      },
       market: storedOdds.market,
       // What was forecast before kickoff, so a live view cannot quietly
       // replace the record this fixture will be scored against.
@@ -71,6 +80,15 @@ export async function GET(request: Request) {
             away: percent(snapshot.market_away_probability),
           },
         },
+      } : null,
+      baselineSnapshot: baselineSnapshot ? {
+        recordedAt: baselineSnapshot.created_at,
+        probabilities: {
+          home: percent(baselineSnapshot.home_probability),
+          draw: percent(baselineSnapshot.draw_probability),
+          away: percent(baselineSnapshot.away_probability),
+        },
+        modelVersion: baselineSnapshot.model_version,
       } : null,
     }, { headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=86400' } });
   } catch (error) {

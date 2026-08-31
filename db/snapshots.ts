@@ -1,5 +1,5 @@
 import type { FixtureRow, ModelOutput } from '@/lib/model';
-import { MODEL_NAME, MODEL_VERSION } from '@/lib/model';
+import { MODEL_VERSION } from '@/lib/model';
 
 export type SnapshotRow = {
   id: number;
@@ -36,6 +36,8 @@ export type SnapshotMarket = {
   bookmakers: number;
 } | null;
 
+export type SnapshotModel = { name: string; version: string };
+
 export async function readLatestSnapshot(db: D1Database, fixtureId: number, modelVersion = MODEL_VERSION) {
   return db
     .prepare(`SELECT * FROM prediction_snapshots WHERE fixture_id = ? AND model_version = ? ORDER BY id DESC LIMIT 1`)
@@ -45,13 +47,13 @@ export async function readLatestSnapshot(db: D1Database, fixtureId: number, mode
 
 // Records a forecast made before kickoff. Returns false when an equivalent
 // forecast is already the latest one held for the fixture.
-export async function writeSnapshot(db: D1Database, fixture: FixtureRow, prediction: ModelOutput, trainingMatches: number, market: SnapshotMarket) {
+export async function writeSnapshot(db: D1Database, fixture: FixtureRow, prediction: ModelOutput, trainingMatches: number, market: SnapshotMarket, model: SnapshotModel) {
   const probabilities = {
     home: prediction.probabilities.home / 100,
     draw: prediction.probabilities.draw / 100,
     away: prediction.probabilities.away / 100,
   };
-  const previous = await readLatestSnapshot(db, fixture.id);
+  const previous = await readLatestSnapshot(db, fixture.id, model.version);
   if (previous && unchanged(previous, probabilities, market)) return false;
 
   await db.prepare(`
@@ -63,7 +65,7 @@ export async function writeSnapshot(db: D1Database, fixture: FixtureRow, predict
       training_matches, created_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
-    fixture.id, fixture.competition_id, fixture.season, fixture.kickoff, MODEL_NAME, MODEL_VERSION,
+    fixture.id, fixture.competition_id, fixture.season, fixture.kickoff, model.name, model.version,
     probabilities.home, probabilities.draw, probabilities.away,
     prediction.expectedGoals.home, prediction.expectedGoals.away,
     prediction.markets.over25 / 100, prediction.markets.btts / 100,

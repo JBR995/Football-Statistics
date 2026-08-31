@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Refreshes the active European season, captures near-term bookmaker odds,
-// then records forecasts for the same upcoming window.
+// Refreshes the active European season, captures near-term bookmaker odds and
+// pre-kickoff line-up/injury snapshots, then records both model versions.
 //
 // Usage:
 //   node scripts/refresh-current.mjs --site https://<host> --token <site-token>
@@ -8,6 +8,8 @@
 //   --season <year>       Season start year (default: inferred; July starts a new season).
 //   --within-days <n>     Odds and forecast horizon (default 14).
 //   --odds-budget <n>     Maximum odds calls per run (default 600).
+//   --availability-days <n> Line-up/injury capture horizon (default 2).
+//   --availability-budget <n> Maximum availability calls (default 400).
 //   --env-file <path>     File holding API_FOOTBALL_KEY (default .env.local).
 //   --dry-run             Show eligible work without provider calls or writes.
 
@@ -26,6 +28,8 @@ const { values } = parseArgs({
     season: { type: 'string' },
     'within-days': { type: 'string', default: '14' },
     'odds-budget': { type: 'string', default: '600' },
+    'availability-days': { type: 'string', default: '2' },
+    'availability-budget': { type: 'string', default: '400' },
     'env-file': { type: 'string', default: '.env.local' },
     'dry-run': { type: 'boolean', default: false },
     help: { type: 'boolean', default: false },
@@ -48,6 +52,8 @@ const inferredSeason = now.getUTCMonth() >= 6 ? now.getUTCFullYear() : now.getUT
 const season = positive(values.season ?? String(inferredSeason), 'season');
 const withinDays = positive(values['within-days'], 'within-days');
 const oddsBudget = positive(values['odds-budget'], 'odds-budget');
+const availabilityDays = positive(values['availability-days'], 'availability-days');
+const availabilityBudget = positive(values['availability-budget'], 'availability-budget');
 const apiKey = values['dry-run'] ? '' : await readProviderKey(values['env-file']);
 const scripts = dirname(fileURLToPath(import.meta.url));
 const commonEnvironment = {
@@ -67,6 +73,12 @@ await run(join(scripts, 'import-history.mjs'), [
 await run(join(scripts, 'import-match-detail.mjs'), [
   '--seasons', String(season), '--include', 'odds', '--within-days', String(withinDays),
   '--retry-empty', '--budget', String(oddsBudget), '--delay', '250',
+  ...(values['dry-run'] ? ['--dry-run'] : []),
+]);
+
+await run(join(scripts, 'import-match-detail.mjs'), [
+  '--seasons', String(season), '--include', 'lineups,injuries', '--within-days', String(availabilityDays),
+  '--retry-empty', '--budget', String(availabilityBudget), '--delay', '250',
   ...(values['dry-run'] ? ['--dry-run'] : []),
 ]);
 
