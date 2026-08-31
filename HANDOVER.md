@@ -137,7 +137,8 @@ normalising first.
 ## Running the importers
 
 Both read `API_FOOTBALL_KEY` from `.env.local`, take the Sites bypass token as
-`--token`, and never send the key anywhere but the provider.
+`--token`, send it in `OAI-Sites-Authorization`, and never send the provider key
+anywhere but API-Football.
 
 ```bash
 # Finish the historical seasons. Two to five minutes; re-running is a no-op.

@@ -172,7 +172,7 @@ async function fetchSeason(league, season) {
 async function uploadSeason(league, season, fixtures) {
   const response = await fetch(`${site}/api/football/history/upload`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${siteToken}` },
+    headers: { 'Content-Type': 'application/json', 'OAI-Sites-Authorization': `Bearer ${siteToken}` },
     body: JSON.stringify({
       league,
       season,
@@ -205,7 +205,7 @@ async function readStoredSeasons() {
   let response;
   try {
     response = await fetch(`${site}/api/football/imports`, {
-      headers: { Authorization: `Bearer ${siteToken}` },
+      headers: { 'OAI-Sites-Authorization': `Bearer ${siteToken}` },
     });
   } catch (error) {
     return fail(`Could not reach ${site}: ${error.message}. Check --site.`);

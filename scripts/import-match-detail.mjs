@@ -208,7 +208,7 @@ async function flush(details) {
   try {
     const response = await fetch(`${site}/api/football/history/upload/match`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${siteToken}` },
+      headers: { 'Content-Type': 'application/json', 'OAI-Sites-Authorization': `Bearer ${siteToken}` },
       body: JSON.stringify({ fixtures: details }),
     });
     const body = await response.json().catch(() => null);
@@ -330,7 +330,7 @@ async function readMissing(name, league, season) {
   const url = `${site}/api/football/history/coverage?missing=${name}&league=${league}&season=${season}&limit=1000`;
   let response;
   try {
-    response = await fetch(url, { headers: { Authorization: `Bearer ${siteToken}` } });
+    response = await fetch(url, { headers: { 'OAI-Sites-Authorization': `Bearer ${siteToken}` } });
   } catch (error) {
     return fail(`Could not reach ${site}: ${error.message}. Check --site.`);
   }
