@@ -26,6 +26,9 @@
 //   --delay <ms>        Pause between provider calls (default 250).
 //   --retry-empty       Re-ask for fixtures the provider had no data for.
 //   --dry-run           Report the work outstanding, call nothing.
+//   --provider <url>    Override the provider base URL. For pointing at
+//                       scripts/dev/mock-provider.mjs; the key is sent to
+//                       whatever this names, so leave it alone otherwise.
 //
 // Fixtures the provider returns nothing for are remembered in
 // scripts/.match-detail-cache.json so a later run does not spend the budget
@@ -92,6 +95,7 @@ const { values } = parseArgs({
     delay: { type: 'string', default: '250' },
     'retry-empty': { type: 'boolean', default: false },
     'dry-run': { type: 'boolean', default: false },
+    provider: { type: 'string' },
     help: { type: 'boolean', default: false },
   },
 });
@@ -102,6 +106,7 @@ if (values.help) {
   process.exit(0);
 }
 
+const providerUrl = (values.provider ?? PROVIDER).replace(/\/+$/, '');
 const site = (values.site ?? process.env.SITE_URL ?? '').replace(/\/+$/, '');
 if (!site) fail('Pass --site https://<host> (or set SITE_URL).');
 const siteToken = values.token ?? process.env.SITES_BYPASS_TOKEN ?? '';
@@ -218,7 +223,7 @@ async function flush(details) {
 
 async function fetchClass(name, fixtureId) {
   const { path, parse } = CLASSES[name];
-  const url = new URL(PROVIDER + path);
+  const url = new URL(providerUrl + path);
   url.searchParams.set('fixture', String(fixtureId));
 
   for (let attempt = 1; ; attempt += 1) {

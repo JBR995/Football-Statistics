@@ -22,13 +22,16 @@
 //   --replace            Re-import seasons already marked complete.
 //   --delay <ms>         Pause between provider calls (default 1500).
 //   --dry-run            Report what would be imported, call nothing.
+//   --provider <url>     Override the provider base URL. For pointing at
+//                        scripts/dev/mock-provider.mjs; the key is sent to
+//                        whatever this names, so leave it alone otherwise.
 //
 // Exits non-zero if any season failed, so a wrapper can retry.
 
 import { readFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 
-const PROVIDER_URL = 'https://v3.football.api-sports.io/fixtures';
+const PROVIDER = 'https://v3.football.api-sports.io';
 const MAX_FIXTURES = 700; // Must match the upload route's limit.
 const PROVIDER_RETRIES = 3;
 
@@ -57,6 +60,7 @@ const { values } = parseArgs({
     replace: { type: 'boolean', default: false },
     delay: { type: 'string', default: '1500' },
     'dry-run': { type: 'boolean', default: false },
+    provider: { type: 'string' },
     help: { type: 'boolean', default: false },
   },
 });
@@ -68,6 +72,7 @@ if (values.help) {
   process.exit(0);
 }
 
+const providerUrl = `${(values.provider ?? PROVIDER).replace(/\/+$/, '')}/fixtures`;
 const site = (values.site ?? process.env.SITE_URL ?? '').replace(/\/+$/, '');
 if (!site) fail('Pass --site https://<host> (or set SITE_URL).');
 
@@ -129,7 +134,7 @@ for (const failure of failures) console.log(`  ${failure.label}: ${failure.messa
 process.exit(failures.length ? 1 : 0);
 
 async function fetchSeason(league, season) {
-  const url = new URL(PROVIDER_URL);
+  const url = new URL(providerUrl);
   url.searchParams.set('league', String(league));
   url.searchParams.set('season', String(season));
   url.searchParams.set('timezone', 'Europe/London');
