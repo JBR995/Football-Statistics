@@ -232,12 +232,9 @@ async function readProviderKey(path) {
   } catch {
     fail(`Could not read ${path}. Set API_FOOTBALL_KEY or pass --env-file.`);
   }
-  for (const line of contents.split('\n')) {
-    const match = line.match(/^\s*(?:export\s+)?API_FOOTBALL_KEY\s*=\s*(.*)$/);
-    if (!match) continue;
-    const value = match[1].trim().replace(/^['"]|['"]$/g, '');
-    if (value) return value;
-  }
+  const match = contents.match(/^\uFEFF?\s*(?:export\s+)?API_FOOTBALL_KEY\s*=\s*(.*?)\s*$/m);
+  const value = match?.[1]?.trim().replace(/^['"]|['"]$/g, '');
+  if (value) return value;
   return fail(`${path} does not define API_FOOTBALL_KEY.`);
 }
 

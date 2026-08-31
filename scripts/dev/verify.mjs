@@ -130,6 +130,13 @@ try {
   check('a reliability curve is produced', (scored.body?.calibration?.points ?? 0) > 0, `${scored.body?.calibration?.points} points, ECE ${scored.body?.calibration?.expectedCalibrationError}`);
   check('forecasts predate their kickoffs', (scored.body?.performance?.medianLeadHours ?? 0) > 0, `median lead ${scored.body?.performance?.medianLeadHours}h`);
 
+  const windowed = await runScript('scripts/import-match-detail.mjs', [
+    '--site', site, '--token', 'dev', '--provider', provider,
+    '--leagues', String(LEAGUE), '--seasons', String(SEASON), '--include', 'odds',
+    '--within-days', '30', '--budget', '500', '--dry-run', '--retry-empty',
+  ]);
+  check('recurring detail work is windowed', windowed.code === 0 && windowed.output.includes('in the next 30 days'), windowed.output.trim().split('\n')[0]);
+
   // --- match detail ---------------------------------------------------------
 
   const detail = await runScript('scripts/import-match-detail.mjs', [

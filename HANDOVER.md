@@ -27,6 +27,15 @@ ingestion path.
   Brier and log-loss scores on the same settled fixtures.
 - The expanded offline verification now has 23 checks, including market capture
   before kickoff and model-versus-market scoring after settlement.
+- Current-season data for all 12 competitions was refreshed on 31 August 2026:
+  4,538 fixtures were imported or updated with no failures.
+- Near-term odds collection is now windowed to the next 14 days to protect the
+  provider allowance. The first run stored 1,341 odds rows for 126 fixtures
+  after 235 provider calls; 109 fixtures had no currently published prices.
+- `scripts/refresh-current.mjs` is the unattended entry point. It refreshes the
+  active season, imports near-term odds under a 600-call ceiling, and records
+  immutable pre-kickoff forecasts. Its final network call retries transient
+  failures three times.
 
 ---
 
@@ -185,7 +194,7 @@ npx wrangler dev --config dist/server/wrangler.json --port 8787 --local &
 node scripts/dev/verify.mjs
 ```
 
-20 checks covering season ingestion, upload validation, snapshot recording and
+24 checks covering season ingestion, upload validation, snapshot recording and
 scoring, detail import, coverage reporting and the match view. It runs the real
 importer scripts against `scripts/dev/mock-provider.mjs`, so a pass means the
 path a real backfill takes is working. No allowance is spent.

@@ -24,6 +24,8 @@
 //   --budget <n>        Maximum provider calls this run (default 1000).
 //   --batch <n>         Fixtures per upload request (default 25, max 50).
 //   --delay <ms>        Pause between provider calls (default 250).
+//   --within-days <n>   Only inspect fixtures kicking off in the next n days.
+//                       Intended for recurring odds and line-up collection.
 //   --retry-empty       Re-ask for fixtures the provider had no data for.
 //   --dry-run           Report the work outstanding, call nothing.
 //   --provider <url>    Override the provider base URL. For pointing at
@@ -93,6 +95,7 @@ const { values } = parseArgs({
     budget: { type: 'string', default: '1000' },
     batch: { type: 'string', default: '25' },
     delay: { type: 'string', default: '250' },
+    'within-days': { type: 'string' },
     'retry-empty': { type: 'boolean', default: false },
     'dry-run': { type: 'boolean', default: false },
     provider: { type: 'string' },
@@ -127,6 +130,9 @@ const budget = positive(values.budget, 'budget');
 const batchSize = Math.min(positive(values.batch, 'batch'), MAX_BATCH);
 const delayMs = Number(values.delay);
 if (!Number.isFinite(delayMs) || delayMs < 0) fail('--delay must be a number of milliseconds.');
+const withinDays = values['within-days'] === undefined ? null : positive(values['within-days'], 'within-days');
+const windowStart = new Date();
+const windowEnd = withinDays === null ? null : new Date(windowStart.getTime() + withinDays * 86_400_000);
 
 const apiKey = values['dry-run'] ? '' : await readProviderKey(values['env-file']);
 const empties = values['retry-empty'] ? new Set() : await readCache();
@@ -138,8 +144,9 @@ for (const league of leagues) {
   for (const season of seasons) {
     for (const name of include) {
       const report = await readMissing(name, league, season);
-      outstanding += report.remaining;
-      for (const fixture of report.fixtures) {
+      const fixtures = report.fixtures.filter((fixture) => inWindow(fixture.kickoff));
+      outstanding += fixtures.length;
+      for (const fixture of fixtures) {
         if (empties.has(`${fixture.id}:${name}`)) continue;
         const entry = work.get(fixture.id) ?? { league, season, classes: new Set() };
         entry.classes.add(name);
@@ -150,7 +157,7 @@ for (const league of leagues) {
 }
 
 const plannedCalls = [...work.values()].reduce((sum, entry) => sum + entry.classes.size, 0);
-console.log(`${outstanding} fixture-classes outstanding across ${leagues.length} competitions and ${seasons.length} seasons.`);
+console.log(`${outstanding} fixture-classes outstanding${withinDays === null ? '' : ` in the next ${withinDays} days`} across ${leagues.length} competitions and ${seasons.length} seasons.`);
 console.log(`This run will make at most ${Math.min(plannedCalls, budget)} provider calls (budget ${budget}).`);
 if (outstanding > budget) {
   console.log(`At ${budget} calls a run, finishing the rest takes about ${Math.ceil(outstanding / budget)} more runs.`);
@@ -362,12 +369,9 @@ async function readProviderKey(path) {
   } catch {
     return fail(`Could not read ${path}. Set API_FOOTBALL_KEY or pass --env-file.`);
   }
-  for (const line of contents.split('\n')) {
-    const match = line.match(/^\s*(?:export\s+)?API_FOOTBALL_KEY\s*=\s*(.*)$/);
-    if (!match) continue;
-    const value = match[1].trim().replace(/^['"]|['"]$/g, '');
-    if (value) return value;
-  }
+  const match = contents.match(/^\uFEFF?\s*(?:export\s+)?API_FOOTBALL_KEY\s*=\s*(.*?)\s*$/m);
+  const value = match?.[1]?.trim().replace(/^['"]|['"]$/g, '');
+  if (value) return value;
   return fail(`${path} does not define API_FOOTBALL_KEY.`);
 }
 
@@ -405,6 +409,12 @@ function nameOf(league) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function inWindow(kickoff) {
+  if (windowEnd === null) return true;
+  const time = Date.parse(kickoff);
+  return Number.isFinite(time) && time > windowStart.getTime() && time <= windowEnd.getTime();
 }
 
 function fail(message) {
