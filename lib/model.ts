@@ -140,7 +140,7 @@ export function backtest(history: FixtureRow[], maximumMatches = 100) {
   const validationStart = Math.max(20, history.length - maximumMatches);
   for (let index = validationStart; index < history.length; index++) {
     const target = history[index];
-    const output = modelPrediction(target, history.slice(0, index));
+    const output = modelPrediction(target, history.slice(0, index).filter((fixture) => fixture.kickoff < target.kickoff));
     const probabilities = [output.probabilities.home / 100, output.probabilities.draw / 100, output.probabilities.away / 100];
     const actualIndex = outcomeIndex(target.home_goals ?? 0, target.away_goals ?? 0);
     const predictedIndex = probabilities.indexOf(Math.max(...probabilities));

@@ -34,13 +34,19 @@ ingestion path.
 - Model Lab now shows the number of eligible feature rows and readiness/coverage
   per competition. The endpoint intentionally returns the audit, not the full
   training matrix; model fitting can call `buildPreMatchFeatures` server-side.
-- The local integration suite is now **29/29**. It validates real importer paths,
+- The first feature-based model is implemented in `lib/model-features.ts`: a
+  regularised multinomial logistic regression using training-only scaling and
+  mean imputation for optional fields. `app/api/football/models/features/route.ts`
+  compares it with Dixon–Coles on identical chronological holdouts and exposes
+  aggregate feature influence. It remains explicitly experimental.
+- The local integration suite is now **31/31**. It validates real importer paths,
   snapshot scoring, identical-fixture market comparison, feature generation,
-  and the no-current-fixture-statistics cutoff.
-- Immediate next work: let the scheduled statistics backfill finish, export/use
-  the eligible feature rows in an improved statistical or tree model, compare it
-  with Dixon–Coles on identical chronological holdouts, then add calibration by
-  competition only where sample sizes support it.
+  the no-current-fixture-statistics cutoff, feature-model training, and its
+  identical-fixture Dixon–Coles comparison.
+- Immediate next work: let the scheduled statistics backfill finish, inspect the
+  full feature-model comparison, and promote it only if Brier score, log loss and
+  calibration beat Dixon–Coles. Otherwise tune or replace it with gradient-boosted
+  trees, retaining the same chronological holdouts.
 
 ## Codex continuation — 31 August 2026
 

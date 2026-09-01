@@ -149,7 +149,7 @@ try {
   const detail = await runScript('scripts/import-match-detail.mjs', [
     '--site', site, '--token', 'dev', '--provider', provider,
     '--leagues', String(LEAGUE), '--seasons', String(SEASON),
-    '--budget', '180', '--batch', '20', '--delay', '0', '--retry-empty',
+    '--budget', '480', '--batch', '20', '--delay', '0', '--retry-empty',
   ]);
   check('match detail imports', detail.code === 0, detail.output.trim().split('\n').filter((line) => line.includes('provider calls')).at(-1));
 
@@ -163,6 +163,10 @@ try {
   const features = await api('/api/football/features');
   check('pre-match feature rows are generated', features.body?.connected === true && (features.body?.summary?.eligibleRows ?? 0) > 0, `${features.body?.summary?.eligibleRows ?? 0} leakage-safe rows`);
   check('feature cutoff is enforced', features.body?.pipeline?.leakageSafe === true && features.body?.pipeline?.usesCurrentFixtureStatistics === false && features.body?.pipeline?.targetSeparatedFromFeatures === true, `window ${features.body?.pipeline?.rollingWindow}, minimum history ${features.body?.pipeline?.minimumTeamHistory}`);
+
+  const featureModel = await api('/api/football/models/features');
+  check('feature model trains on chronological holdouts', featureModel.body?.connected === true && featureModel.body?.model?.version === '3.0-experimental' && featureModel.body?.model?.usesFutureData === false && (featureModel.body?.summary?.validationMatches ?? 0) > 0, `${featureModel.body?.model?.name ?? 'missing model'}; ${featureModel.body?.summary?.validationMatches ?? 0} holdouts`);
+  check('feature model and Dixon-Coles use identical fixtures', featureModel.body?.summary?.featureModel?.matches > 0 && featureModel.body?.summary?.featureModel?.matches === featureModel.body?.summary?.dixonColes?.matches, `${featureModel.body?.summary?.featureModel?.matches ?? 0} shared fixtures`);
 
   const odds = await runScript('scripts/import-match-detail.mjs', [
     '--site', site, '--token', 'dev', '--provider', provider,

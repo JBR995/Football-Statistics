@@ -1,0 +1,208 @@
+import { outcomeIndex, percent, round } from '@/lib/model';
+import type { PreMatchFeatureRow } from '@/lib/features';
+
+export const FEATURE_MODEL_NAME = 'Rolling-stat multinomial logistic regression';
+export const FEATURE_MODEL_VERSION = '3.0-experimental';
+export const FEATURE_MODEL_MINIMUM_TRAINING_ROWS = 100;
+
+const FIT_ITERATIONS = 360;
+const REGULARISATION = 0.025;
+
+type FeatureDefinition = {
+  key: string;
+  label: string;
+  value: (row: PreMatchFeatureRow) => number | null;
+};
+
+const FEATURES: FeatureDefinition[] = [
+  { key: 'home_goals_for', label: 'Home goals for', value: (row) => row.homeGoalsFor },
+  { key: 'home_goals_against', label: 'Home goals against', value: (row) => row.homeGoalsAgainst },
+  { key: 'away_goals_for', label: 'Away goals for', value: (row) => row.awayGoalsFor },
+  { key: 'away_goals_against', label: 'Away goals against', value: (row) => row.awayGoalsAgainst },
+  { key: 'home_shot_balance', label: 'Home shot balance', value: (row) => row.homeShotsFor - row.homeShotsAgainst },
+  { key: 'away_shot_balance', label: 'Away shot balance', value: (row) => row.awayShotsFor - row.awayShotsAgainst },
+  { key: 'home_shots_on_balance', label: 'Home shots-on-target balance', value: (row) => row.homeShotsOnFor - row.homeShotsOnAgainst },
+  { key: 'away_shots_on_balance', label: 'Away shots-on-target balance', value: (row) => row.awayShotsOnFor - row.awayShotsOnAgainst },
+  { key: 'possession_edge', label: 'Possession edge', value: (row) => difference(row.homePossession, row.awayPossession) },
+  { key: 'corner_balance_edge', label: 'Corner balance edge', value: (row) => difference(balance(row.homeCornersFor, row.homeCornersAgainst), balance(row.awayCornersFor, row.awayCornersAgainst)) },
+  { key: 'discipline_edge', label: 'Discipline edge', value: (row) => difference(row.awayCardPoints, row.homeCardPoints) },
+  { key: 'passing_edge', label: 'Pass accuracy edge', value: (row) => difference(row.homePassAccuracy, row.awayPassAccuracy) },
+  { key: 'xg_balance_edge', label: 'Expected-goals balance edge', value: (row) => difference(balance(row.homeExpectedGoalsFor, row.homeExpectedGoalsAgainst), balance(row.awayExpectedGoalsFor, row.awayExpectedGoalsAgainst)) },
+  { key: 'rest_edge', label: 'Rest-day edge', value: (row) => Math.max(-14, Math.min(14, row.homeRestDays - row.awayRestDays)) },
+];
+
+type Scaler = { means: number[]; deviations: number[]; available: boolean[] };
+type Model = { weights: number[][]; scaler: Scaler };
+
+export type FeatureModelEvaluation = {
+  matches: number;
+  trainingRows: number;
+  accuracy: number;
+  brier: number | null;
+  logLoss: number | null;
+  fixtureIds: number[];
+  featureImportance: Array<{ key: string; label: string; importance: number }>;
+  methodology: string;
+};
+
+export function backtestFeatureModel(rows: PreMatchFeatureRow[], maximumMatches = 60, minimumTrainingRows = FEATURE_MODEL_MINIMUM_TRAINING_ROWS): FeatureModelEvaluation {
+  const ordered = [...rows].sort((a, b) => a.kickoff.localeCompare(b.kickoff) || a.fixtureId - b.fixtureId);
+  const validationStart = Math.max(minimumTrainingRows, ordered.length - maximumMatches);
+  if (validationStart >= ordered.length) return emptyEvaluation(Math.min(validationStart, ordered.length));
+
+  const training = ordered.slice(0, validationStart);
+  const model = fit(training);
+  const featureImportance = importance(model.weights);
+  let correct = 0;
+  let brier = 0;
+  let logLoss = 0;
+  const fixtureIds: number[] = [];
+
+  for (const target of ordered.slice(validationStart)) {
+    const probabilities = predict(target, model);
+    const actual = targetOutcomeIndex(target);
+    if (probabilities.indexOf(Math.max(...probabilities)) === actual) correct++;
+    brier += probabilities.reduce((sum, probability, outcome) => sum + (probability - (outcome === actual ? 1 : 0)) ** 2, 0);
+    logLoss += -Math.log(Math.max(probabilities[actual], 0.001));
+    fixtureIds.push(target.fixtureId);
+    update(model, target, actual);
+  }
+
+  const matches = fixtureIds.length;
+  return {
+    matches,
+    trainingRows: training.length,
+    accuracy: matches ? percent(correct / matches) : 0,
+    brier: matches ? round(brier / matches, 3) : null,
+    logLoss: matches ? round(logLoss / matches, 3) : null,
+    fixtureIds,
+    featureImportance,
+    methodology: `Chronological walk-forward validation. Coefficients and scaling start with ${training.length} earlier rows; each holdout is predicted before its result is used for one online update.`,
+  };
+}
+
+function fit(rows: PreMatchFeatureRow[]): Model {
+  const raw = rows.map(rawVector);
+  const scaler = prepareScaler(raw);
+  const vectors = raw.map((values) => scale(values, scaler));
+  const targets = rows.map(targetOutcomeIndex);
+  const weights = Array.from({ length: 3 }, () => Array(FEATURES.length + 1).fill(0));
+  const classCounts = [0, 0, 0];
+  for (const target of targets) classCounts[target]++;
+  for (let outcome = 0; outcome < 3; outcome++) weights[outcome][0] = Math.log((classCounts[outcome] + 1) / (targets.length + 3));
+
+  for (let iteration = 0; iteration < FIT_ITERATIONS; iteration++) {
+    const gradient = Array.from({ length: 3 }, () => Array(FEATURES.length + 1).fill(0));
+    for (let rowIndex = 0; rowIndex < vectors.length; rowIndex++) {
+      const vector = [1, ...vectors[rowIndex]];
+      const probabilities = softmax(weights.map((outcomeWeights) => dot(outcomeWeights, vector)));
+      for (let outcome = 0; outcome < 3; outcome++) {
+        const error = probabilities[outcome] - (targets[rowIndex] === outcome ? 1 : 0);
+        for (let feature = 0; feature < vector.length; feature++) gradient[outcome][feature] += error * vector[feature];
+      }
+    }
+    const learningRate = 0.22 / Math.sqrt(1 + iteration / 45);
+    for (let outcome = 0; outcome < 3; outcome++) {
+      for (let feature = 0; feature < weights[outcome].length; feature++) {
+        const penalty = feature === 0 ? 0 : REGULARISATION * weights[outcome][feature];
+        weights[outcome][feature] -= learningRate * (gradient[outcome][feature] / rows.length + penalty);
+      }
+    }
+  }
+  return { weights, scaler };
+}
+
+function predict(row: PreMatchFeatureRow, model: Model) {
+  const vector = [1, ...scale(rawVector(row), model.scaler)];
+  return softmax(model.weights.map((weights) => dot(weights, vector)));
+}
+
+function update(model: Model, row: PreMatchFeatureRow, actual: number) {
+  const vector = [1, ...scale(rawVector(row), model.scaler)];
+  for (let pass = 0; pass < 4; pass++) {
+    const probabilities = softmax(model.weights.map((weights) => dot(weights, vector)));
+    for (let outcome = 0; outcome < 3; outcome++) {
+      const error = probabilities[outcome] - (actual === outcome ? 1 : 0);
+      for (let feature = 0; feature < vector.length; feature++) {
+        const penalty = feature === 0 ? 0 : REGULARISATION * model.weights[outcome][feature];
+        model.weights[outcome][feature] -= 0.018 * (error * vector[feature] + penalty);
+      }
+    }
+  }
+}
+
+function rawVector(row: PreMatchFeatureRow) {
+  return FEATURES.map((feature) => feature.value(row));
+}
+
+function prepareScaler(rows: Array<Array<number | null>>): Scaler {
+  const means = FEATURES.map((_, index) => mean(rows.map((row) => row[index])));
+  const available = FEATURES.map((_, index) => rows.some((row) => finite(row[index])));
+  const deviations = FEATURES.map((_, index) => {
+    const values = rows.map((row) => row[index]).filter(finite);
+    if (!values.length) return 1;
+    const variance = values.reduce((sum, value) => sum + (value - means[index]) ** 2, 0) / values.length;
+    return Math.sqrt(variance) || 1;
+  });
+  return { means, deviations, available };
+}
+
+function scale(values: Array<number | null>, scaler: Scaler) {
+  return values.map((value, index) => !scaler.available[index] || value === null || !Number.isFinite(value) ? 0 : (value - scaler.means[index]) / scaler.deviations[index]);
+}
+
+function importance(weights: number[][]) {
+  const values = FEATURES.map((feature, index) => ({
+    key: feature.key,
+    label: feature.label,
+    raw: weights.reduce((sum, outcome) => sum + Math.abs(outcome[index + 1]), 0) / weights.length,
+  }));
+  const total = values.reduce((sum, value) => sum + value.raw, 0) || 1;
+  return values.map((value) => ({ key: value.key, label: value.label, importance: round(value.raw * 100 / total, 1) }))
+    .sort((a, b) => b.importance - a.importance);
+}
+
+function emptyEvaluation(trainingRows: number): FeatureModelEvaluation {
+  return {
+    matches: 0,
+    trainingRows,
+    accuracy: 0,
+    brier: null,
+    logLoss: null,
+    fixtureIds: [],
+    featureImportance: [],
+    methodology: `At least ${FEATURE_MODEL_MINIMUM_TRAINING_ROWS} eligible rows are required before a chronological holdout is scored.`,
+  };
+}
+
+function targetOutcomeIndex(row: PreMatchFeatureRow) {
+  return outcomeIndex(row.targetHomeGoals, row.targetAwayGoals);
+}
+
+function softmax(scores: number[]) {
+  const largest = Math.max(...scores);
+  const exponentials = scores.map((score) => Math.exp(score - largest));
+  const total = exponentials.reduce((sum, value) => sum + value, 0);
+  return exponentials.map((value) => value / total);
+}
+
+function dot(left: number[], right: number[]) {
+  return left.reduce((sum, value, index) => sum + value * right[index], 0);
+}
+
+function difference(left: number | null, right: number | null) {
+  return left === null || right === null ? null : left - right;
+}
+
+function balance(forValue: number | null, againstValue: number | null) {
+  return forValue === null || againstValue === null ? null : forValue - againstValue;
+}
+
+function mean(values: Array<number | null>) {
+  const available = values.filter(finite);
+  return available.length ? available.reduce((sum, value) => sum + value, 0) / available.length : 0;
+}
+
+function finite(value: number | null): value is number {
+  return value !== null && Number.isFinite(value);
+}

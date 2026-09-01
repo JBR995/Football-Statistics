@@ -156,7 +156,7 @@ export function backtestDixonColes(history: FixtureRow[], maximumMatches = 60) {
   const validationStart = Math.max(20, history.length - maximumMatches);
   for (let index = validationStart; index < history.length; index++) {
     const target = history[index];
-    const output = dixonColesPrediction(target, history.slice(0, index));
+    const output = dixonColesPrediction(target, history.slice(0, index).filter((fixture) => fixture.kickoff < target.kickoff));
     const probabilities = [output.probabilities.home / 100, output.probabilities.draw / 100, output.probabilities.away / 100];
     const actual = outcomeIndex(target.home_goals ?? 0, target.away_goals ?? 0);
     if (probabilities.indexOf(Math.max(...probabilities)) === actual) correct++;
@@ -170,6 +170,32 @@ export function backtestDixonColes(history: FixtureRow[], maximumMatches = 60) {
     brier: matches ? round(brier / matches, 3) : null,
     logLoss: matches ? round(logLoss / matches, 3) : null,
     methodology: `Walk-forward Dixon–Coles validation with a ${TIME_DECAY_HALF_LIFE_DAYS}-day half-life; every target uses only earlier results.`,
+  };
+}
+
+export function backtestDixonColesOnFixtures(history: FixtureRow[], fixtureIds: Set<number>) {
+  let correct = 0;
+  let brier = 0;
+  let logLoss = 0;
+  let matches = 0;
+  for (const target of history) {
+    if (!fixtureIds.has(target.id)) continue;
+    const earlier = history.filter((fixture) => fixture.kickoff < target.kickoff);
+    if (earlier.length < 20) continue;
+    const output = dixonColesPrediction(target, earlier);
+    const probabilities = [output.probabilities.home / 100, output.probabilities.draw / 100, output.probabilities.away / 100];
+    const actual = outcomeIndex(target.home_goals ?? 0, target.away_goals ?? 0);
+    if (probabilities.indexOf(Math.max(...probabilities)) === actual) correct++;
+    brier += probabilities.reduce((sum, probability, outcome) => sum + (probability - (outcome === actual ? 1 : 0)) ** 2, 0);
+    logLoss += -Math.log(Math.max(probabilities[actual], 0.001));
+    matches++;
+  }
+  return {
+    matches,
+    accuracy: matches ? percent(correct / matches) : 0,
+    brier: matches ? round(brier / matches, 3) : null,
+    logLoss: matches ? round(logLoss / matches, 3) : null,
+    methodology: `Dixon–Coles scored on the feature model's exact fixtures, using only results with an earlier kickoff.`,
   };
 }
 

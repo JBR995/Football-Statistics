@@ -157,6 +157,35 @@ type FeatureReadinessFeed = {
   checkedAt?: string;
   error?: string;
 };
+type FeatureModelScore = { matches: number; accuracy: number | null; brier: number | null; logLoss: number | null };
+type FeatureModelFeed = {
+  connected: boolean;
+  model?: { name: string; version: string; status: string; minimumTrainingRows: number; usesFutureData: boolean };
+  summary?: {
+    competitions: number;
+    eligibleRows: number;
+    validationMatches: number;
+    featureModel: FeatureModelScore;
+    dixonColes: FeatureModelScore;
+    brierDifference: number | null;
+    logLossDifference: number | null;
+  };
+  comparison?: { matches: number; entries: Array<FeatureModelScore & { name: string; version: string }> };
+  evaluations?: Array<{
+    competitionId: number;
+    competition: string;
+    latestSeason: number;
+    eligibleRows: number;
+    trainingRows: number;
+    matches: number;
+    featureModel: FeatureModelScore;
+    dixonColes: FeatureModelScore;
+  }>;
+  featureImportance?: Array<{ key: string; label: string; importance: number }>;
+  methodology?: string;
+  checkedAt?: string;
+  error?: string;
+};
 
 const FIXTURE_COMPETITIONS = [
   { id: 39, name: 'Premier League', season: 2026 },
@@ -816,19 +845,23 @@ function readinessRows(coverage: DetailCoverageFeed | null) {
 function Models() {
   const [feed, setFeed] = useState<ModelEvaluationFeed | null>(null);
   const [featureFeed, setFeatureFeed] = useState<FeatureReadinessFeed | null>(null);
+  const [featureModelFeed, setFeatureModelFeed] = useState<FeatureModelFeed | null>(null);
   const [loading, setLoading] = useState(true);
   const load = async () => {
     setLoading(true);
     try {
-      const [modelResponse, featureResponse] = await Promise.all([
+      const [modelResponse, featureResponse, featureModelResponse] = await Promise.all([
         fetch('/api/football/models', { cache: 'no-store' }),
         fetch('/api/football/features', { cache: 'no-store' }),
+        fetch('/api/football/models/features', { cache: 'no-store' }),
       ]);
       setFeed(await modelResponse.json() as ModelEvaluationFeed);
       setFeatureFeed(await featureResponse.json() as FeatureReadinessFeed);
+      setFeatureModelFeed(await featureModelResponse.json() as FeatureModelFeed);
     } catch {
       setFeed({ connected: false, error: 'Model evaluation could not be reached.' });
       setFeatureFeed({ connected: false, error: 'Feature readiness could not be reached.' });
+      setFeatureModelFeed({ connected: false, error: 'The feature-model experiment could not be reached.' });
     }
     finally { setLoading(false); }
   };
@@ -843,6 +876,7 @@ function Models() {
       <div className="rounded-xl border border-primary/15 bg-primary/[.04] p-4 text-xs leading-5 text-muted-foreground"><ShieldCheck className="mb-2 size-4 text-primary" />{feed.methodology} Accuracy is not used alone: Brier score and log loss measure whether the probabilities themselves are trustworthy.</div>
     </div>}
     <FeatureReadiness feed={featureFeed} loading={loading} />
+    <FeatureModelExperiment feed={featureModelFeed} loading={loading} />
     <div className="mt-4"><ForecastRecord /></div>
   </>;
 }
@@ -877,6 +911,48 @@ function FeatureReadiness({ feed, loading }: { feed: FeatureReadinessFeed | null
             </table>
           </div>
           <p className="rounded-xl border border-primary/15 bg-primary/[.035] p-4 text-xs leading-5 text-muted-foreground"><ShieldCheck className="mr-2 inline size-4 text-primary" />{feed.methodology} Current-match statistics are never used as predictors.</p>
+        </div>}
+    </CardContent>
+  </Card>;
+}
+
+function FeatureModelExperiment({ feed, loading }: { feed: FeatureModelFeed | null; loading: boolean }) {
+  const summary = feed?.summary;
+  const lower = summary?.brierDifference === null || summary?.brierDifference === undefined ? null : summary.brierDifference < 0;
+  const largestImportance = Math.max(1, ...(feed?.featureImportance ?? []).map((feature) => feature.importance));
+  return <Card className="mt-4 border-white/8 bg-card/75">
+    <CardHeader><CardTitle className="flex items-center gap-2"><BrainCircuit className="size-4 text-primary" /> Rolling-stat model experiment</CardTitle><p className="text-xs text-muted-foreground">The first trained feature model, benchmarked against Dixon–Coles on identical chronological holdouts.</p></CardHeader>
+    <CardContent>
+      {loading && !feed ? <div className="flex min-h-32 items-center justify-center gap-3 text-sm text-muted-foreground"><LoaderCircle className="size-5 animate-spin text-primary" /> Training and evaluating the feature model…</div>
+        : !feed?.connected ? <div className="rounded-xl border border-amber-300/15 bg-amber-300/[.04] p-4"><p className="font-medium text-amber-100">The feature-model experiment is unavailable.</p><p className="mt-1 text-xs text-muted-foreground">{feed?.error ?? 'The stored feature dataset could not be evaluated.'}</p></div>
+        : !summary?.validationMatches ? <div className="rounded-xl border border-white/7 bg-white/[.02] p-4 text-xs leading-5 text-muted-foreground">The experiment unlocks when a competition has more than {feed.model?.minimumTrainingRows ?? 100} eligible pre-match rows. The statistics backfill is still building that evidence.</div>
+        : <div className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <MiniMetric label="Identical holdout fixtures" value={summary.validationMatches.toLocaleString()} />
+            <MiniMetric label="Feature-model Brier" value={summary.featureModel.brier?.toFixed(3) ?? '—'} />
+            <MiniMetric label="Dixon–Coles Brier" value={summary.dixonColes.brier?.toFixed(3) ?? '—'} />
+            <MiniMetric label="Feature-model difference" value={summary.brierDifference === null ? '—' : `${summary.brierDifference > 0 ? '+' : ''}${summary.brierDifference.toFixed(3)}`} />
+          </div>
+          <div className={`rounded-xl border p-4 text-xs leading-5 ${lower ? 'border-primary/20 bg-primary/[.04]' : 'border-amber-300/15 bg-amber-300/[.035]'}`}>
+            <p className="font-medium text-foreground">{lower ? 'The feature model currently has the lower aggregate Brier score.' : 'Dixon–Coles currently has the lower aggregate Brier score.'}</p>
+            <p className="mt-1 text-muted-foreground">This is experimental evidence, not a promotion decision. The comparison expands automatically as historical statistics become available.</p>
+          </div>
+          <div className="grid gap-4 xl:grid-cols-[1.2fr_.8fr]">
+            <div className="overflow-x-auto rounded-xl border border-white/7">
+              <table className="w-full min-w-[680px] text-left text-sm">
+                <thead className="bg-white/[.025] text-[10px] uppercase tracking-[.12em] text-muted-foreground"><tr>{['Competition', 'Eligible rows', 'Holdout', 'Feature Brier', 'D–C Brier', 'Difference'].map((head) => <th key={head} className="px-3 py-3 font-medium">{head}</th>)}</tr></thead>
+                <tbody>{feed.evaluations?.map((row) => {
+                  const difference = row.featureModel.brier === null || row.dixonColes.brier === null ? null : row.featureModel.brier - row.dixonColes.brier;
+                  return <tr key={row.competitionId} className="border-t border-white/6"><td className="px-3 py-2.5 font-medium">{row.competition}</td><td className="px-3 font-mono text-xs">{row.eligibleRows.toLocaleString()}</td><td className="px-3 font-mono text-xs">{row.matches}</td><td className="px-3 font-mono text-primary">{row.featureModel.brier?.toFixed(3) ?? '—'}</td><td className="px-3 font-mono text-xs">{row.dixonColes.brier?.toFixed(3) ?? '—'}</td><td className="px-3 font-mono text-xs">{difference === null ? '—' : `${difference > 0 ? '+' : ''}${difference.toFixed(3)}`}</td></tr>;
+                })}</tbody>
+              </table>
+            </div>
+            <div className="rounded-xl border border-white/7 bg-white/[.02] p-4">
+              <p className="text-sm font-medium">Feature influence</p><p className="mt-1 text-[10px] leading-4 text-muted-foreground">Mean absolute standardised coefficient across competitions and outcomes. Association, not causation.</p>
+              <div className="mt-4 space-y-3">{feed.featureImportance?.slice(0, 7).map((feature) => <div key={feature.key}><div className="mb-1 flex justify-between gap-3 text-[11px]"><span className="text-muted-foreground">{feature.label}</span><span className="font-mono text-primary">{feature.importance}%</span></div><Progress value={feature.importance * 100 / largestImportance} className="h-1.5" /></div>)}</div>
+            </div>
+          </div>
+          <p className="rounded-xl border border-primary/15 bg-primary/[.035] p-4 text-xs leading-5 text-muted-foreground"><ShieldCheck className="mr-2 inline size-4 text-primary" />{feed.methodology}</p>
         </div>}
     </CardContent>
   </Card>;
