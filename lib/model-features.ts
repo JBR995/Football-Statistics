@@ -9,7 +9,7 @@ export const FEATURE_MODEL_MINIMUM_TRAINING_ROWS = 100;
 
 const FIT_ITERATIONS = 360;
 const REGULARISATION = 0.025;
-const BOOSTING_ROUNDS = 64;
+const BOOSTING_ROUNDS = 48;
 const BOOSTING_RATE = 0.18;
 const BOOSTING_MINIMUM_LEAF = 30;
 const BOOSTING_L2 = 8;
@@ -119,7 +119,7 @@ export function backtestBoostedFeatureModel(rows: PreMatchFeatureRow[], maximumM
     logLoss: matches ? round(logLoss / matches, 3) : null,
     fixtureIds,
     featureImportance: gainImportance(model.featureGains),
-    methodology: `Fixed-origin chronological holdout using ${BOOSTING_ROUNDS} depth-two vector-valued trees. Medians, class priors, splits and leaf values are fitted only on the earlier training period.`,
+    methodology: `Fixed-origin chronological holdout using ${BOOSTING_ROUNDS} vector-valued decision stumps. Medians, class priors, splits and leaf values are fitted only on the earlier training period.`,
   };
 }
 
@@ -166,13 +166,14 @@ function fitBoosted(rows: PreMatchFeatureRow[]): BoostedModel {
   const trees: TreeNode[] = [];
   const featureGains = FEATURES.map(() => 0);
   const indices = matrix.map((_, index) => index);
+  const orders = FEATURES.map((_, feature) => [...indices].sort((left, right) => matrix[left][feature] - matrix[right][feature] || left - right));
 
   for (let roundIndex = 0; roundIndex < BOOSTING_ROUNDS; roundIndex++) {
     const residuals = logits.map((scores, index) => {
       const probabilities = softmax(scores);
       return probabilities.map((probability, outcome) => (targets[index] === outcome ? 1 : 0) - probability);
     });
-    const tree = fitTree(matrix, residuals, indices, 0, featureGains);
+    const tree = fitStump(matrix, residuals, indices, orders, featureGains);
     trees.push(tree);
     for (let index = 0; index < matrix.length; index++) {
       const values = treeValues(tree, matrix[index]);
@@ -182,26 +183,12 @@ function fitBoosted(rows: PreMatchFeatureRow[]): BoostedModel {
   return { initialScores, trees, medians, featureGains };
 }
 
-function fitTree(matrix: number[][], residuals: number[][], indices: number[], depth: number, featureGains: number[]): TreeNode {
-  if (depth >= 2 || indices.length < BOOSTING_MINIMUM_LEAF * 2) return leaf(residuals, indices);
-  const split = bestSplit(matrix, residuals, indices);
-  if (!split || split.gain <= 0) return leaf(residuals, indices);
-  featureGains[split.feature] += split.gain;
-  const left = indices.filter((index) => matrix[index][split.feature] <= split.threshold);
-  const right = indices.filter((index) => matrix[index][split.feature] > split.threshold);
-  return {
-    type: 'branch', feature: split.feature, threshold: split.threshold, gain: split.gain,
-    left: fitTree(matrix, residuals, left, depth + 1, featureGains),
-    right: fitTree(matrix, residuals, right, depth + 1, featureGains),
-  };
-}
-
-function bestSplit(matrix: number[][], residuals: number[][], indices: number[]) {
+function fitStump(matrix: number[][], residuals: number[][], indices: number[], orders: number[][], featureGains: number[]): TreeNode {
   const totals = sumResiduals(residuals, indices);
   const parentScore = splitScore(totals, indices.length);
   let best: { feature: number; threshold: number; gain: number } | null = null;
   for (let feature = 0; feature < FEATURES.length; feature++) {
-    const ordered = [...indices].sort((left, right) => matrix[left][feature] - matrix[right][feature] || left - right);
+    const ordered = orders[feature];
     const leftSums = [0, 0, 0];
     for (let position = 0; position < ordered.length - 1; position++) {
       const index = ordered[position];
@@ -217,7 +204,11 @@ function bestSplit(matrix: number[][], residuals: number[][], indices: number[])
       if (!best || gain > best.gain) best = { feature, threshold: (value + nextValue) / 2, gain };
     }
   }
-  return best;
+  if (!best || best.gain <= 0) return leaf(residuals, indices);
+  featureGains[best.feature] += best.gain;
+  const left = indices.filter((index) => matrix[index][best.feature] <= best.threshold);
+  const right = indices.filter((index) => matrix[index][best.feature] > best.threshold);
+  return { type: 'branch', feature: best.feature, threshold: best.threshold, gain: best.gain, left: leaf(residuals, left), right: leaf(residuals, right) };
 }
 
 function leaf(residuals: number[][], indices: number[]): TreeNode {

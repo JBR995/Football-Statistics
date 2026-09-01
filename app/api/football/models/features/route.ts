@@ -108,7 +108,7 @@ export async function GET() {
       },
       evaluations,
       featureImportance: aggregateImportance(evaluations),
-      methodology: `All three models are scored on the same last 60 eligible fixtures per competition. Logistic regression uses training-only scaling and online updates after each scored holdout. The boosted model is a fixed-origin ensemble of depth-two trees with training-period median imputation. Dixon–Coles uses only results with an earlier kickoff. Both feature models remain experimental until they beat Dixon–Coles on probability quality and forward validation.`,
+      methodology: `All three models are scored on the same last 60 eligible fixtures per competition. Logistic regression uses training-only scaling and online updates after each scored holdout. The boosted model is a fixed-origin ensemble of pre-sorted decision stumps with training-period median imputation. Dixon–Coles uses only results with an earlier kickoff. Both feature models remain experimental until they beat Dixon–Coles on probability quality and forward validation.`,
       checkedAt: new Date().toISOString(),
     }, { headers: { 'Cache-Control': 'public, s-maxage=21600, stale-while-revalidate=86400' } });
   } catch (error) {

@@ -853,21 +853,16 @@ function Models() {
   const [loading, setLoading] = useState(true);
   const load = async () => {
     setLoading(true);
-    try {
-      const [modelResponse, featureResponse, featureModelResponse] = await Promise.all([
-        fetch('/api/football/models', { cache: 'no-store' }),
-        fetch('/api/football/features', { cache: 'no-store' }),
-        fetch('/api/football/models/features', { cache: 'no-store' }),
-      ]);
-      setFeed(await modelResponse.json() as ModelEvaluationFeed);
-      setFeatureFeed(await featureResponse.json() as FeatureReadinessFeed);
-      setFeatureModelFeed(await featureModelResponse.json() as FeatureModelFeed);
-    } catch {
-      setFeed({ connected: false, error: 'Model evaluation could not be reached.' });
-      setFeatureFeed({ connected: false, error: 'Feature readiness could not be reached.' });
-      setFeatureModelFeed({ connected: false, error: 'The feature-model experiment could not be reached.' });
-    }
-    finally { setLoading(false); }
+    const read = async <T,>(url: string, fallback: T): Promise<T> => {
+      try { return await (await fetch(url, { cache: 'no-store' })).json() as T; }
+      catch { return fallback; }
+    };
+    const [models, features, experiment] = await Promise.all([
+      read<ModelEvaluationFeed>('/api/football/models', { connected: false, error: 'Model evaluation could not be reached.' }),
+      read<FeatureReadinessFeed>('/api/football/features', { connected: false, error: 'Feature readiness could not be reached.' }),
+      read<FeatureModelFeed>('/api/football/models/features', { connected: false, error: 'The feature-model experiment could not be reached.' }),
+    ]);
+    setFeed(models); setFeatureFeed(features); setFeatureModelFeed(experiment); setLoading(false);
   };
   useEffect(() => { void load(); }, []);
   const summary = feed?.summary;
@@ -952,7 +947,7 @@ function FeatureModelExperiment({ feed, loading }: { feed: FeatureModelFeed | nu
               </table>
             </div>
             <div className="rounded-xl border border-white/7 bg-white/[.02] p-4">
-              <p className="text-sm font-medium">Boosted-tree influence</p><p className="mt-1 text-[10px] leading-4 text-muted-foreground">Share of split improvement across competitions. Association, not causation.</p>
+              <p className="text-sm font-medium">Boosted-tree influence</p><p className="mt-1 text-[10px] leading-4 text-muted-foreground">Share of decision-stump split improvement across competitions. Association, not causation.</p>
               <div className="mt-4 space-y-3">{feed.featureImportance?.slice(0, 7).map((feature) => <div key={feature.key}><div className="mb-1 flex justify-between gap-3 text-[11px]"><span className="text-muted-foreground">{feature.label}</span><span className="font-mono text-primary">{feature.importance}%</span></div><Progress value={feature.importance * 100 / largestImportance} className="h-1.5" /></div>)}</div>
             </div>
           </div>
