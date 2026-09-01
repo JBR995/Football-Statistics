@@ -39,6 +39,10 @@ ingestion path.
   mean imputation for optional fields. `app/api/football/models/features/route.ts`
   compares it with Dixon–Coles on identical chronological holdouts and exposes
   aggregate feature influence. It remains explicitly experimental.
+- The same module now includes a second candidate: 64 depth-two vector-valued
+  gradient-boosted trees, with training-period median imputation and a fixed
+  chronological holdout. Model Lab shows all three Brier scores on identical
+  fixtures and uses tree split gain for the feature-influence view.
 - The local integration suite is now **31/31**. It validates real importer paths,
   snapshot scoring, identical-fixture market comparison, feature generation,
   the no-current-fixture-statistics cutoff, feature-model training, and its

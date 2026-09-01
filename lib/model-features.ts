@@ -3,10 +3,16 @@ import type { PreMatchFeatureRow } from '@/lib/features';
 
 export const FEATURE_MODEL_NAME = 'Rolling-stat multinomial logistic regression';
 export const FEATURE_MODEL_VERSION = '3.0-experimental';
+export const BOOSTED_MODEL_NAME = 'Rolling-stat gradient-boosted trees';
+export const BOOSTED_MODEL_VERSION = '3.1-experimental';
 export const FEATURE_MODEL_MINIMUM_TRAINING_ROWS = 100;
 
 const FIT_ITERATIONS = 360;
 const REGULARISATION = 0.025;
+const BOOSTING_ROUNDS = 64;
+const BOOSTING_RATE = 0.18;
+const BOOSTING_MINIMUM_LEAF = 30;
+const BOOSTING_L2 = 8;
 
 type FeatureDefinition = {
   key: string;
@@ -33,6 +39,10 @@ const FEATURES: FeatureDefinition[] = [
 
 type Scaler = { means: number[]; deviations: number[]; available: boolean[] };
 type Model = { weights: number[][]; scaler: Scaler };
+type TreeNode =
+  | { type: 'leaf'; values: number[] }
+  | { type: 'branch'; feature: number; threshold: number; gain: number; left: TreeNode; right: TreeNode };
+type BoostedModel = { initialScores: number[]; trees: TreeNode[]; medians: number[]; featureGains: number[] };
 
 export type FeatureModelEvaluation = {
   matches: number;
@@ -81,6 +91,38 @@ export function backtestFeatureModel(rows: PreMatchFeatureRow[], maximumMatches 
   };
 }
 
+export function backtestBoostedFeatureModel(rows: PreMatchFeatureRow[], maximumMatches = 60, minimumTrainingRows = FEATURE_MODEL_MINIMUM_TRAINING_ROWS): FeatureModelEvaluation {
+  const ordered = [...rows].sort((a, b) => a.kickoff.localeCompare(b.kickoff) || a.fixtureId - b.fixtureId);
+  const validationStart = Math.max(minimumTrainingRows, ordered.length - maximumMatches);
+  if (validationStart >= ordered.length) return emptyBoostedEvaluation(Math.min(validationStart, ordered.length));
+
+  const training = ordered.slice(0, validationStart);
+  const model = fitBoosted(training);
+  let correct = 0;
+  let brier = 0;
+  let logLoss = 0;
+  const fixtureIds: number[] = [];
+  for (const target of ordered.slice(validationStart)) {
+    const probabilities = predictBoosted(target, model);
+    const actual = targetOutcomeIndex(target);
+    if (probabilities.indexOf(Math.max(...probabilities)) === actual) correct++;
+    brier += probabilities.reduce((sum, probability, outcome) => sum + (probability - (outcome === actual ? 1 : 0)) ** 2, 0);
+    logLoss += -Math.log(Math.max(probabilities[actual], 0.001));
+    fixtureIds.push(target.fixtureId);
+  }
+  const matches = fixtureIds.length;
+  return {
+    matches,
+    trainingRows: training.length,
+    accuracy: matches ? percent(correct / matches) : 0,
+    brier: matches ? round(brier / matches, 3) : null,
+    logLoss: matches ? round(logLoss / matches, 3) : null,
+    fixtureIds,
+    featureImportance: gainImportance(model.featureGains),
+    methodology: `Fixed-origin chronological holdout using ${BOOSTING_ROUNDS} depth-two vector-valued trees. Medians, class priors, splits and leaf values are fitted only on the earlier training period.`,
+  };
+}
+
 function fit(rows: PreMatchFeatureRow[]): Model {
   const raw = rows.map(rawVector);
   const scaler = prepareScaler(raw);
@@ -110,6 +152,102 @@ function fit(rows: PreMatchFeatureRow[]): Model {
     }
   }
   return { weights, scaler };
+}
+
+function fitBoosted(rows: PreMatchFeatureRow[]): BoostedModel {
+  const raw = rows.map(rawVector);
+  const medians = FEATURES.map((_, index) => median(raw.map((row) => row[index])));
+  const matrix = raw.map((values) => impute(values, medians));
+  const targets = rows.map(targetOutcomeIndex);
+  const classCounts = [0, 0, 0];
+  for (const target of targets) classCounts[target]++;
+  const initialScores = classCounts.map((count) => Math.log((count + 1) / (targets.length + 3)));
+  const logits = matrix.map(() => [...initialScores]);
+  const trees: TreeNode[] = [];
+  const featureGains = FEATURES.map(() => 0);
+  const indices = matrix.map((_, index) => index);
+
+  for (let roundIndex = 0; roundIndex < BOOSTING_ROUNDS; roundIndex++) {
+    const residuals = logits.map((scores, index) => {
+      const probabilities = softmax(scores);
+      return probabilities.map((probability, outcome) => (targets[index] === outcome ? 1 : 0) - probability);
+    });
+    const tree = fitTree(matrix, residuals, indices, 0, featureGains);
+    trees.push(tree);
+    for (let index = 0; index < matrix.length; index++) {
+      const values = treeValues(tree, matrix[index]);
+      for (let outcome = 0; outcome < 3; outcome++) logits[index][outcome] += BOOSTING_RATE * values[outcome];
+    }
+  }
+  return { initialScores, trees, medians, featureGains };
+}
+
+function fitTree(matrix: number[][], residuals: number[][], indices: number[], depth: number, featureGains: number[]): TreeNode {
+  if (depth >= 2 || indices.length < BOOSTING_MINIMUM_LEAF * 2) return leaf(residuals, indices);
+  const split = bestSplit(matrix, residuals, indices);
+  if (!split || split.gain <= 0) return leaf(residuals, indices);
+  featureGains[split.feature] += split.gain;
+  const left = indices.filter((index) => matrix[index][split.feature] <= split.threshold);
+  const right = indices.filter((index) => matrix[index][split.feature] > split.threshold);
+  return {
+    type: 'branch', feature: split.feature, threshold: split.threshold, gain: split.gain,
+    left: fitTree(matrix, residuals, left, depth + 1, featureGains),
+    right: fitTree(matrix, residuals, right, depth + 1, featureGains),
+  };
+}
+
+function bestSplit(matrix: number[][], residuals: number[][], indices: number[]) {
+  const totals = sumResiduals(residuals, indices);
+  const parentScore = splitScore(totals, indices.length);
+  let best: { feature: number; threshold: number; gain: number } | null = null;
+  for (let feature = 0; feature < FEATURES.length; feature++) {
+    const ordered = [...indices].sort((left, right) => matrix[left][feature] - matrix[right][feature] || left - right);
+    const leftSums = [0, 0, 0];
+    for (let position = 0; position < ordered.length - 1; position++) {
+      const index = ordered[position];
+      for (let outcome = 0; outcome < 3; outcome++) leftSums[outcome] += residuals[index][outcome];
+      const leftCount = position + 1;
+      const rightCount = ordered.length - leftCount;
+      if (leftCount < BOOSTING_MINIMUM_LEAF || rightCount < BOOSTING_MINIMUM_LEAF) continue;
+      const value = matrix[index][feature];
+      const nextValue = matrix[ordered[position + 1]][feature];
+      if (value === nextValue) continue;
+      const rightSums = totals.map((total, outcome) => total - leftSums[outcome]);
+      const gain = splitScore(leftSums, leftCount) + splitScore(rightSums, rightCount) - parentScore;
+      if (!best || gain > best.gain) best = { feature, threshold: (value + nextValue) / 2, gain };
+    }
+  }
+  return best;
+}
+
+function leaf(residuals: number[][], indices: number[]): TreeNode {
+  const totals = sumResiduals(residuals, indices);
+  return { type: 'leaf', values: totals.map((total) => total / (indices.length + BOOSTING_L2)) };
+}
+
+function predictBoosted(row: PreMatchFeatureRow, model: BoostedModel) {
+  const vector = impute(rawVector(row), model.medians);
+  const scores = [...model.initialScores];
+  for (const tree of model.trees) {
+    const values = treeValues(tree, vector);
+    for (let outcome = 0; outcome < 3; outcome++) scores[outcome] += BOOSTING_RATE * values[outcome];
+  }
+  return softmax(scores);
+}
+
+function treeValues(tree: TreeNode, vector: number[]): number[] {
+  if (tree.type === 'leaf') return tree.values;
+  return treeValues(vector[tree.feature] <= tree.threshold ? tree.left : tree.right, vector);
+}
+
+function sumResiduals(residuals: number[][], indices: number[]) {
+  const sums = [0, 0, 0];
+  for (const index of indices) for (let outcome = 0; outcome < 3; outcome++) sums[outcome] += residuals[index][outcome];
+  return sums;
+}
+
+function splitScore(sums: number[], count: number) {
+  return sums.reduce((score, value) => score + value ** 2, 0) / (count + BOOSTING_L2);
 }
 
 function predict(row: PreMatchFeatureRow, model: Model) {
@@ -162,6 +300,12 @@ function importance(weights: number[][]) {
     .sort((a, b) => b.importance - a.importance);
 }
 
+function gainImportance(gains: number[]) {
+  const total = gains.reduce((sum, value) => sum + value, 0) || 1;
+  return FEATURES.map((feature, index) => ({ key: feature.key, label: feature.label, importance: round(gains[index] * 100 / total, 1) }))
+    .sort((a, b) => b.importance - a.importance);
+}
+
 function emptyEvaluation(trainingRows: number): FeatureModelEvaluation {
   return {
     matches: 0,
@@ -172,6 +316,13 @@ function emptyEvaluation(trainingRows: number): FeatureModelEvaluation {
     fixtureIds: [],
     featureImportance: [],
     methodology: `At least ${FEATURE_MODEL_MINIMUM_TRAINING_ROWS} eligible rows are required before a chronological holdout is scored.`,
+  };
+}
+
+function emptyBoostedEvaluation(trainingRows: number): FeatureModelEvaluation {
+  return {
+    ...emptyEvaluation(trainingRows),
+    methodology: `At least ${FEATURE_MODEL_MINIMUM_TRAINING_ROWS} eligible rows are required before boosted-tree training begins.`,
   };
 }
 
@@ -201,6 +352,17 @@ function balance(forValue: number | null, againstValue: number | null) {
 function mean(values: Array<number | null>) {
   const available = values.filter(finite);
   return available.length ? available.reduce((sum, value) => sum + value, 0) / available.length : 0;
+}
+
+function median(values: Array<number | null>) {
+  const available = values.filter(finite).sort((left, right) => left - right);
+  if (!available.length) return 0;
+  const middle = Math.floor(available.length / 2);
+  return available.length % 2 ? available[middle] : (available[middle - 1] + available[middle]) / 2;
+}
+
+function impute(values: Array<number | null>, medians: number[]) {
+  return values.map((value, index) => value === null || !Number.isFinite(value) ? medians[index] : value);
 }
 
 function finite(value: number | null): value is number {

@@ -165,8 +165,8 @@ try {
   check('feature cutoff is enforced', features.body?.pipeline?.leakageSafe === true && features.body?.pipeline?.usesCurrentFixtureStatistics === false && features.body?.pipeline?.targetSeparatedFromFeatures === true, `window ${features.body?.pipeline?.rollingWindow}, minimum history ${features.body?.pipeline?.minimumTeamHistory}`);
 
   const featureModel = await api('/api/football/models/features');
-  check('feature model trains on chronological holdouts', featureModel.body?.connected === true && featureModel.body?.model?.version === '3.0-experimental' && featureModel.body?.model?.usesFutureData === false && (featureModel.body?.summary?.validationMatches ?? 0) > 0, `${featureModel.body?.model?.name ?? 'missing model'}; ${featureModel.body?.summary?.validationMatches ?? 0} holdouts`);
-  check('feature model and Dixon-Coles use identical fixtures', featureModel.body?.summary?.featureModel?.matches > 0 && featureModel.body?.summary?.featureModel?.matches === featureModel.body?.summary?.dixonColes?.matches, `${featureModel.body?.summary?.featureModel?.matches ?? 0} shared fixtures`);
+  check('boosted feature model trains on chronological holdouts', featureModel.body?.connected === true && featureModel.body?.model?.version === '3.1-experimental' && featureModel.body?.model?.usesFutureData === false && (featureModel.body?.summary?.validationMatches ?? 0) > 0, `${featureModel.body?.model?.name ?? 'missing model'}; ${featureModel.body?.summary?.validationMatches ?? 0} holdouts`);
+  check('all candidate models use identical fixtures', featureModel.body?.summary?.featureModel?.matches > 0 && featureModel.body?.summary?.featureModel?.matches === featureModel.body?.summary?.boostedModel?.matches && featureModel.body?.summary?.featureModel?.matches === featureModel.body?.summary?.dixonColes?.matches, `${featureModel.body?.summary?.featureModel?.matches ?? 0} shared fixtures`);
 
   const odds = await runScript('scripts/import-match-detail.mjs', [
     '--site', site, '--token', 'dev', '--provider', provider,

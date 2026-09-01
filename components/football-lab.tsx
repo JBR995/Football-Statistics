@@ -166,9 +166,12 @@ type FeatureModelFeed = {
     eligibleRows: number;
     validationMatches: number;
     featureModel: FeatureModelScore;
+    boostedModel: FeatureModelScore;
     dixonColes: FeatureModelScore;
     brierDifference: number | null;
     logLossDifference: number | null;
+    boostedBrierDifference: number | null;
+    boostedLogLossDifference: number | null;
   };
   comparison?: { matches: number; entries: Array<FeatureModelScore & { name: string; version: string }> };
   evaluations?: Array<{
@@ -179,6 +182,7 @@ type FeatureModelFeed = {
     trainingRows: number;
     matches: number;
     featureModel: FeatureModelScore;
+    boostedModel: FeatureModelScore;
     dixonColes: FeatureModelScore;
   }>;
   featureImportance?: Array<{ key: string; label: string; importance: number }>;
@@ -918,10 +922,10 @@ function FeatureReadiness({ feed, loading }: { feed: FeatureReadinessFeed | null
 
 function FeatureModelExperiment({ feed, loading }: { feed: FeatureModelFeed | null; loading: boolean }) {
   const summary = feed?.summary;
-  const lower = summary?.brierDifference === null || summary?.brierDifference === undefined ? null : summary.brierDifference < 0;
+  const lower = summary?.boostedBrierDifference === null || summary?.boostedBrierDifference === undefined ? null : summary.boostedBrierDifference < 0;
   const largestImportance = Math.max(1, ...(feed?.featureImportance ?? []).map((feature) => feature.importance));
   return <Card className="mt-4 border-white/8 bg-card/75">
-    <CardHeader><CardTitle className="flex items-center gap-2"><BrainCircuit className="size-4 text-primary" /> Rolling-stat model experiment</CardTitle><p className="text-xs text-muted-foreground">The first trained feature model, benchmarked against Dixon–Coles on identical chronological holdouts.</p></CardHeader>
+    <CardHeader><CardTitle className="flex items-center gap-2"><BrainCircuit className="size-4 text-primary" /> Rolling-stat model experiments</CardTitle><p className="text-xs text-muted-foreground">Logistic regression and gradient-boosted trees, benchmarked against Dixon–Coles on identical chronological holdouts.</p></CardHeader>
     <CardContent>
       {loading && !feed ? <div className="flex min-h-32 items-center justify-center gap-3 text-sm text-muted-foreground"><LoaderCircle className="size-5 animate-spin text-primary" /> Training and evaluating the feature model…</div>
         : !feed?.connected ? <div className="rounded-xl border border-amber-300/15 bg-amber-300/[.04] p-4"><p className="font-medium text-amber-100">The feature-model experiment is unavailable.</p><p className="mt-1 text-xs text-muted-foreground">{feed?.error ?? 'The stored feature dataset could not be evaluated.'}</p></div>
@@ -929,26 +933,26 @@ function FeatureModelExperiment({ feed, loading }: { feed: FeatureModelFeed | nu
         : <div className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <MiniMetric label="Identical holdout fixtures" value={summary.validationMatches.toLocaleString()} />
-            <MiniMetric label="Feature-model Brier" value={summary.featureModel.brier?.toFixed(3) ?? '—'} />
+            <MiniMetric label="Boosted-tree Brier" value={summary.boostedModel.brier?.toFixed(3) ?? '—'} />
             <MiniMetric label="Dixon–Coles Brier" value={summary.dixonColes.brier?.toFixed(3) ?? '—'} />
-            <MiniMetric label="Feature-model difference" value={summary.brierDifference === null ? '—' : `${summary.brierDifference > 0 ? '+' : ''}${summary.brierDifference.toFixed(3)}`} />
+            <MiniMetric label="Boosted-tree difference" value={summary.boostedBrierDifference === null ? '—' : `${summary.boostedBrierDifference > 0 ? '+' : ''}${summary.boostedBrierDifference.toFixed(3)}`} />
           </div>
           <div className={`rounded-xl border p-4 text-xs leading-5 ${lower ? 'border-primary/20 bg-primary/[.04]' : 'border-amber-300/15 bg-amber-300/[.035]'}`}>
-            <p className="font-medium text-foreground">{lower ? 'The feature model currently has the lower aggregate Brier score.' : 'Dixon–Coles currently has the lower aggregate Brier score.'}</p>
+            <p className="font-medium text-foreground">{lower ? 'The boosted model currently has the lower aggregate Brier score.' : 'Dixon–Coles currently has the lower aggregate Brier score.'}</p>
             <p className="mt-1 text-muted-foreground">This is experimental evidence, not a promotion decision. The comparison expands automatically as historical statistics become available.</p>
           </div>
           <div className="grid gap-4 xl:grid-cols-[1.2fr_.8fr]">
             <div className="overflow-x-auto rounded-xl border border-white/7">
               <table className="w-full min-w-[680px] text-left text-sm">
-                <thead className="bg-white/[.025] text-[10px] uppercase tracking-[.12em] text-muted-foreground"><tr>{['Competition', 'Eligible rows', 'Holdout', 'Feature Brier', 'D–C Brier', 'Difference'].map((head) => <th key={head} className="px-3 py-3 font-medium">{head}</th>)}</tr></thead>
+                <thead className="bg-white/[.025] text-[10px] uppercase tracking-[.12em] text-muted-foreground"><tr>{['Competition', 'Eligible', 'Holdout', 'Logistic', 'Boosted', 'D–C', 'Boosted Δ'].map((head) => <th key={head} className="px-3 py-3 font-medium">{head}</th>)}</tr></thead>
                 <tbody>{feed.evaluations?.map((row) => {
-                  const difference = row.featureModel.brier === null || row.dixonColes.brier === null ? null : row.featureModel.brier - row.dixonColes.brier;
-                  return <tr key={row.competitionId} className="border-t border-white/6"><td className="px-3 py-2.5 font-medium">{row.competition}</td><td className="px-3 font-mono text-xs">{row.eligibleRows.toLocaleString()}</td><td className="px-3 font-mono text-xs">{row.matches}</td><td className="px-3 font-mono text-primary">{row.featureModel.brier?.toFixed(3) ?? '—'}</td><td className="px-3 font-mono text-xs">{row.dixonColes.brier?.toFixed(3) ?? '—'}</td><td className="px-3 font-mono text-xs">{difference === null ? '—' : `${difference > 0 ? '+' : ''}${difference.toFixed(3)}`}</td></tr>;
+                  const difference = row.boostedModel.brier === null || row.dixonColes.brier === null ? null : row.boostedModel.brier - row.dixonColes.brier;
+                  return <tr key={row.competitionId} className="border-t border-white/6"><td className="px-3 py-2.5 font-medium">{row.competition}</td><td className="px-3 font-mono text-xs">{row.eligibleRows.toLocaleString()}</td><td className="px-3 font-mono text-xs">{row.matches}</td><td className="px-3 font-mono text-xs">{row.featureModel.brier?.toFixed(3) ?? '—'}</td><td className="px-3 font-mono text-primary">{row.boostedModel.brier?.toFixed(3) ?? '—'}</td><td className="px-3 font-mono text-xs">{row.dixonColes.brier?.toFixed(3) ?? '—'}</td><td className="px-3 font-mono text-xs">{difference === null ? '—' : `${difference > 0 ? '+' : ''}${difference.toFixed(3)}`}</td></tr>;
                 })}</tbody>
               </table>
             </div>
             <div className="rounded-xl border border-white/7 bg-white/[.02] p-4">
-              <p className="text-sm font-medium">Feature influence</p><p className="mt-1 text-[10px] leading-4 text-muted-foreground">Mean absolute standardised coefficient across competitions and outcomes. Association, not causation.</p>
+              <p className="text-sm font-medium">Boosted-tree influence</p><p className="mt-1 text-[10px] leading-4 text-muted-foreground">Share of split improvement across competitions. Association, not causation.</p>
               <div className="mt-4 space-y-3">{feed.featureImportance?.slice(0, 7).map((feature) => <div key={feature.key}><div className="mb-1 flex justify-between gap-3 text-[11px]"><span className="text-muted-foreground">{feature.label}</span><span className="font-mono text-primary">{feature.importance}%</span></div><Progress value={feature.importance * 100 / largestImportance} className="h-1.5" /></div>)}</div>
             </div>
           </div>

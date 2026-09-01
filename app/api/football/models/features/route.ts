@@ -4,7 +4,10 @@ import { readCompletedHistory } from '@/db/fixtures';
 import { buildPreMatchFeatures } from '@/lib/features';
 import { backtestDixonColesOnFixtures, MODEL_V2_NAME, MODEL_V2_VERSION } from '@/lib/model-v2';
 import {
+  backtestBoostedFeatureModel,
   backtestFeatureModel,
+  BOOSTED_MODEL_NAME,
+  BOOSTED_MODEL_VERSION,
   FEATURE_MODEL_MINIMUM_TRAINING_ROWS,
   FEATURE_MODEL_NAME,
   FEATURE_MODEL_VERSION,
@@ -20,6 +23,7 @@ type Evaluation = {
   trainingRows: number;
   matches: number;
   featureModel: Score;
+  boostedModel: Score;
   dixonColes: Score;
   featureImportance: Array<{ key: string; label: string; importance: number }>;
 };
@@ -43,6 +47,8 @@ export async function GET() {
 
       const featureModel = backtestFeatureModel(rows, 60);
       if (!featureModel.matches) continue;
+      const boostedModel = backtestBoostedFeatureModel(rows, 60);
+      if (boostedModel.fixtureIds.join(',') !== featureModel.fixtureIds.join(',')) continue;
       const resultHistory = await readCompletedHistory(db, options);
       const dixonColes = backtestDixonColesOnFixtures(resultHistory, new Set(featureModel.fixtureIds));
       if (dixonColes.matches !== featureModel.matches) continue;
@@ -54,26 +60,28 @@ export async function GET() {
         trainingRows: featureModel.trainingRows,
         matches: featureModel.matches,
         featureModel: score(featureModel),
+        boostedModel: score(boostedModel),
         dixonColes: score(dixonColes),
-        featureImportance: featureModel.featureImportance,
+        featureImportance: boostedModel.featureImportance,
       });
     }
 
     const matches = evaluations.reduce((sum, evaluation) => sum + evaluation.matches, 0);
-    const aggregate = (model: 'featureModel' | 'dixonColes') => ({
+    const aggregate = (model: 'featureModel' | 'boostedModel' | 'dixonColes') => ({
       matches,
       accuracy: weighted(evaluations, model, 'accuracy', matches, 1),
       brier: weighted(evaluations, model, 'brier', matches, 3),
       logLoss: weighted(evaluations, model, 'logLoss', matches, 3),
     });
     const featureScore = aggregate('featureModel');
+    const boostedScore = aggregate('boostedModel');
     const dixonColesScore = aggregate('dixonColes');
 
     return Response.json({
       connected: true,
       model: {
-        name: FEATURE_MODEL_NAME,
-        version: FEATURE_MODEL_VERSION,
+        name: BOOSTED_MODEL_NAME,
+        version: BOOSTED_MODEL_VERSION,
         status: 'experimental',
         minimumTrainingRows: FEATURE_MODEL_MINIMUM_TRAINING_ROWS,
         usesFutureData: false,
@@ -83,20 +91,24 @@ export async function GET() {
         eligibleRows: evaluations.reduce((sum, evaluation) => sum + evaluation.eligibleRows, 0),
         validationMatches: matches,
         featureModel: featureScore,
+        boostedModel: boostedScore,
         dixonColes: dixonColesScore,
         brierDifference: difference(featureScore.brier, dixonColesScore.brier),
+        boostedBrierDifference: difference(boostedScore.brier, dixonColesScore.brier),
         logLossDifference: difference(featureScore.logLoss, dixonColesScore.logLoss),
+        boostedLogLossDifference: difference(boostedScore.logLoss, dixonColesScore.logLoss),
       },
       comparison: {
         matches,
         entries: [
           { name: MODEL_V2_NAME, version: MODEL_V2_VERSION, ...dixonColesScore },
           { name: FEATURE_MODEL_NAME, version: FEATURE_MODEL_VERSION, ...featureScore },
+          { name: BOOSTED_MODEL_NAME, version: BOOSTED_MODEL_VERSION, ...boostedScore },
         ],
       },
       evaluations,
       featureImportance: aggregateImportance(evaluations),
-      methodology: `Both models are scored on the same last 60 eligible fixtures per competition. The logistic model uses only pre-kickoff rolling features and updates after each holdout result; Dixon–Coles uses only results with an earlier kickoff. Missing optional fields are imputed to the training-period mean after training-only standardisation. This model remains experimental until the statistics backfill and forward validation record are sufficiently complete.`,
+      methodology: `All three models are scored on the same last 60 eligible fixtures per competition. Logistic regression uses training-only scaling and online updates after each scored holdout. The boosted model is a fixed-origin ensemble of depth-two trees with training-period median imputation. Dixon–Coles uses only results with an earlier kickoff. Both feature models remain experimental until they beat Dixon–Coles on probability quality and forward validation.`,
       checkedAt: new Date().toISOString(),
     }, { headers: { 'Cache-Control': 'public, s-maxage=21600, stale-while-revalidate=86400' } });
   } catch (error) {
@@ -111,7 +123,7 @@ function score(value: Score) {
   return { matches: value.matches, accuracy: value.accuracy, brier: value.brier, logLoss: value.logLoss };
 }
 
-function weighted(evaluations: Evaluation[], model: 'featureModel' | 'dixonColes', key: 'accuracy' | 'brier' | 'logLoss', matches: number, places: number) {
+function weighted(evaluations: Evaluation[], model: 'featureModel' | 'boostedModel' | 'dixonColes', key: 'accuracy' | 'brier' | 'logLoss', matches: number, places: number) {
   if (!matches) return null;
   const value = evaluations.reduce((sum, evaluation) => sum + Number(evaluation[model][key] ?? 0) * evaluation.matches, 0) / matches;
   return Number(value.toFixed(places));
