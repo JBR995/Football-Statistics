@@ -149,7 +149,7 @@ try {
   const detail = await runScript('scripts/import-match-detail.mjs', [
     '--site', site, '--token', 'dev', '--provider', provider,
     '--leagues', String(LEAGUE), '--seasons', String(SEASON),
-    '--budget', '120', '--batch', '20', '--delay', '0', '--retry-empty',
+    '--budget', '180', '--batch', '20', '--delay', '0', '--retry-empty',
   ]);
   check('match detail imports', detail.code === 0, detail.output.trim().split('\n').filter((line) => line.includes('provider calls')).at(-1));
 
@@ -159,6 +159,10 @@ try {
   check('line-ups are stored', (detailRow?.lineups ?? 0) > 0, `${detailRow?.lineups} matches`);
   check('odds are stored', (detailRow?.odds ?? 0) > 0, `${detailRow?.odds} matches`);
   check('availability snapshots are stored', (detailRow?.availability ?? 0) > 0, `${detailRow?.availability} fixtures captured before kickoff`);
+
+  const features = await api('/api/football/features');
+  check('pre-match feature rows are generated', features.body?.connected === true && (features.body?.summary?.eligibleRows ?? 0) > 0, `${features.body?.summary?.eligibleRows ?? 0} leakage-safe rows`);
+  check('feature cutoff is enforced', features.body?.pipeline?.leakageSafe === true && features.body?.pipeline?.usesCurrentFixtureStatistics === false && features.body?.pipeline?.targetSeparatedFromFeatures === true, `window ${features.body?.pipeline?.rollingWindow}, minimum history ${features.body?.pipeline?.minimumTeamHistory}`);
 
   const odds = await runScript('scripts/import-match-detail.mjs', [
     '--site', site, '--token', 'dev', '--provider', provider,

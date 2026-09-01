@@ -130,6 +130,33 @@ type ModelEvaluationFeed = {
   error?: string;
 };
 type ModelValidation = { matches: number; accuracy: number; brier: number | null; logLoss: number | null; methodology: string };
+type FeatureReadinessFeed = {
+  connected: boolean;
+  pipeline?: { leakageSafe: boolean; usesCurrentFixtureStatistics: boolean; targetSeparatedFromFeatures: boolean; rollingWindow: number; minimumTeamHistory: number };
+  summary?: {
+    competitions: number;
+    readyCompetitions: number;
+    matches: number;
+    eligibleRows: number;
+    coverage: { core: number; possession: number; corners: number; cards: number; passing: number; expectedGoals: number };
+  };
+  readiness?: Array<{
+    competitionId: number;
+    competition: string;
+    latestSeason: number;
+    matches: number;
+    matchesWithStatistics: number;
+    coreStatisticsMatches: number;
+    eligibleRows: number;
+    firstEligibleKickoff: string | null;
+    lastEligibleKickoff: string | null;
+    coverage: { statistics: number; core: number; possession: number; corners: number; cards: number; passing: number; expectedGoals: number };
+    state: 'ready' | 'building' | 'awaiting-statistics';
+  }>;
+  methodology?: string;
+  checkedAt?: string;
+  error?: string;
+};
 
 const FIXTURE_COMPETITIONS = [
   { id: 39, name: 'Premier League', season: 2026 },
@@ -788,13 +815,21 @@ function readinessRows(coverage: DetailCoverageFeed | null) {
 
 function Models() {
   const [feed, setFeed] = useState<ModelEvaluationFeed | null>(null);
+  const [featureFeed, setFeatureFeed] = useState<FeatureReadinessFeed | null>(null);
   const [loading, setLoading] = useState(true);
   const load = async () => {
     setLoading(true);
     try {
-      const response = await fetch('/api/football/models', { cache: 'no-store' });
-      setFeed(await response.json() as ModelEvaluationFeed);
-    } catch { setFeed({ connected: false, error: 'Model evaluation could not be reached.' }); }
+      const [modelResponse, featureResponse] = await Promise.all([
+        fetch('/api/football/models', { cache: 'no-store' }),
+        fetch('/api/football/features', { cache: 'no-store' }),
+      ]);
+      setFeed(await modelResponse.json() as ModelEvaluationFeed);
+      setFeatureFeed(await featureResponse.json() as FeatureReadinessFeed);
+    } catch {
+      setFeed({ connected: false, error: 'Model evaluation could not be reached.' });
+      setFeatureFeed({ connected: false, error: 'Feature readiness could not be reached.' });
+    }
     finally { setLoading(false); }
   };
   useEffect(() => { void load(); }, []);
@@ -807,8 +842,44 @@ function Models() {
       <div className="grid gap-4 xl:grid-cols-[.9fr_1.1fr]"><Card className="border-white/8 bg-card/75"><CardHeader><CardTitle>Accuracy by competition</CardTitle><p className="text-xs text-muted-foreground">Descriptive only; calibration metrics remain the primary model check.</p></CardHeader><CardContent><ChartContainer config={chartConfig} className="h-[320px] w-full"><BarChart data={chartData} layout="vertical"><CartesianGrid horizontal={false} strokeDasharray="4 4" /><XAxis type="number" domain={[0, 100]} hide /><YAxis type="category" dataKey="competition" width={100} axisLine={false} tickLine={false} /><ChartTooltip content={<ChartTooltipContent />} /><Bar dataKey="value" fill="var(--color-chart-1)" radius={[0, 6, 6, 0]} /></BarChart></ChartContainer></CardContent></Card><Card className="border-white/8 bg-card/75"><CardHeader><CardTitle>Evaluation ledger</CardTitle><p className="text-xs text-muted-foreground">Current stored history and out-of-sample performance</p></CardHeader><CardContent className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-sm"><thead className="border-y border-white/8 text-[10px] uppercase tracking-[.12em] text-muted-foreground"><tr>{['Competition', 'Seasons', 'Training', 'Validation', 'Accuracy', 'Brier', 'Log loss'].map((head) => <th key={head} className="px-3 py-3 font-medium">{head}</th>)}</tr></thead><tbody>{feed.evaluations?.map((evaluation) => <tr key={evaluation.competitionId} className="border-b border-white/6"><td className="px-3 py-3 font-medium">{evaluation.competition}</td><td className="px-3 font-mono text-xs">{evaluation.seasons}</td><td className="px-3 font-mono text-xs">{evaluation.trainingMatches.toLocaleString()}</td><td className="px-3 font-mono text-xs">{evaluation.validation.matches}</td><td className="px-3 font-mono text-primary">{evaluation.validation.accuracy}%</td><td className="px-3 font-mono text-xs">{evaluation.validation.brier ?? '—'}</td><td className="px-3 font-mono text-xs">{evaluation.validation.logLoss ?? '—'}</td></tr>)}</tbody></table></CardContent></Card></div>
       <div className="rounded-xl border border-primary/15 bg-primary/[.04] p-4 text-xs leading-5 text-muted-foreground"><ShieldCheck className="mb-2 size-4 text-primary" />{feed.methodology} Accuracy is not used alone: Brier score and log loss measure whether the probabilities themselves are trustworthy.</div>
     </div>}
+    <FeatureReadiness feed={featureFeed} loading={loading} />
     <div className="mt-4"><ForecastRecord /></div>
   </>;
+}
+
+function FeatureReadiness({ feed, loading }: { feed: FeatureReadinessFeed | null; loading: boolean }) {
+  const summary = feed?.summary;
+  const stateLabel = (state: 'ready' | 'building' | 'awaiting-statistics') => state === 'ready' ? 'Ready' : state === 'building' ? 'Building' : 'Awaiting stats';
+  return <Card className="mt-4 border-primary/15 bg-primary/[.025]">
+    <CardHeader><CardTitle className="flex items-center gap-2"><Database className="size-4 text-primary" /> Pre-match feature dataset</CardTitle><p className="text-xs text-muted-foreground">Rolling statistical inputs prepared for the machine-learning layer, audited competition by competition.</p></CardHeader>
+    <CardContent>
+      {loading && !feed ? <div className="flex min-h-32 items-center justify-center gap-3 text-sm text-muted-foreground"><LoaderCircle className="size-5 animate-spin text-primary" /> Auditing feature coverage…</div>
+        : !feed?.connected || !summary ? <div className="rounded-xl border border-amber-300/15 bg-amber-300/[.04] p-4"><p className="font-medium text-amber-100">Feature readiness is unavailable.</p><p className="mt-1 text-xs text-muted-foreground">{feed?.error ?? 'No stored match statistics are available.'}</p></div>
+        : <div className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <MiniMetric label="Eligible training rows" value={summary.eligibleRows.toLocaleString()} />
+            <MiniMetric label="Core-stat coverage" value={`${summary.coverage.core}%`} />
+            <MiniMetric label="Competitions ready" value={`${summary.readyCompetitions}/${summary.competitions}`} />
+            <MiniMetric label="Rolling window" value={`${feed.pipeline?.rollingWindow ?? 5} matches`} />
+          </div>
+          <div className="overflow-x-auto rounded-xl border border-white/7">
+            <table className="w-full min-w-[760px] text-left text-sm">
+              <thead className="bg-white/[.025] text-[10px] uppercase tracking-[.12em] text-muted-foreground"><tr>{['Competition', 'Completed', 'With stats', 'Core stats', 'Eligible rows', 'Coverage', 'State'].map((head) => <th key={head} className="px-3 py-3 font-medium">{head}</th>)}</tr></thead>
+              <tbody>{feed.readiness?.map((row) => <tr key={row.competitionId} className="border-t border-white/6">
+                <td className="px-3 py-2.5 font-medium">{row.competition}</td>
+                <td className="px-3 font-mono text-xs">{row.matches.toLocaleString()}</td>
+                <td className="px-3 font-mono text-xs">{row.matchesWithStatistics.toLocaleString()}</td>
+                <td className="px-3 font-mono text-xs">{row.coreStatisticsMatches.toLocaleString()}</td>
+                <td className="px-3 font-mono text-primary">{row.eligibleRows.toLocaleString()}</td>
+                <td className="px-3 font-mono text-xs">{row.coverage.core}%</td>
+                <td className="px-3"><Badge variant="outline" className={row.state === 'ready' ? 'border-primary/30 text-primary' : 'border-amber-300/25 text-amber-100'}>{stateLabel(row.state)}</Badge></td>
+              </tr>)}</tbody>
+            </table>
+          </div>
+          <p className="rounded-xl border border-primary/15 bg-primary/[.035] p-4 text-xs leading-5 text-muted-foreground"><ShieldCheck className="mr-2 inline size-4 text-primary" />{feed.methodology} Current-match statistics are never used as predictors.</p>
+        </div>}
+    </CardContent>
+  </Card>;
 }
 
 function ForecastRecord() {

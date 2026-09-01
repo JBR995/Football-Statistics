@@ -10,6 +10,38 @@ Read `## Next, in order` if you only read one section.
 reading, with screenshots of the branch running and a diagram of the
 ingestion path.
 
+## Codex continuation — 1 September 2026
+
+- Production and GitHub `main` are aligned through commit `2b10cc0` before the
+  feature-pipeline work described below. The live Site is version 26 and remains
+  owner-only.
+- Baseline v2 is now a real Dixon–Coles model with exponential time decay. Model
+  Lab compares v1 and v2 on the same walk-forward fixtures using accuracy, Brier
+  score and log loss. Pre-kickoff availability snapshots and current market
+  prices are stored alongside forecast snapshots when available.
+- Historical fixture statistics are complete for Premier League (1,900/1,900),
+  Ligue 1 (1,688/1,688), and all but the provider-empty fixtures in Championship
+  (2,783/2,785), League One (2,784/2,785), and League Two (2,785/2,785): 11,937
+  of 11,940 across that tranche. Overall coverage is 11,937 of 23,884 completed
+  matches. The 01:30 automation continues the remaining seven competitions when
+  provider quota is at least 7,200.
+- A leakage-safe feature pipeline now lives in `lib/features.ts`, backed by the
+  joined D1 reader in `db/features.ts` and the audit endpoint at
+  `app/api/football/features/route.ts`. It builds five-match rolling inputs only
+  from fixtures earlier than the target kickoff. Goals, shots, shots on target,
+  possession, corners, card points, pass accuracy, xG and rest days are exposed;
+  the current match result is kept in separate target fields.
+- Model Lab now shows the number of eligible feature rows and readiness/coverage
+  per competition. The endpoint intentionally returns the audit, not the full
+  training matrix; model fitting can call `buildPreMatchFeatures` server-side.
+- The local integration suite is now **29/29**. It validates real importer paths,
+  snapshot scoring, identical-fixture market comparison, feature generation,
+  and the no-current-fixture-statistics cutoff.
+- Immediate next work: let the scheduled statistics backfill finish, export/use
+  the eligible feature rows in an improved statistical or tree model, compare it
+  with Dixon–Coles on identical chronological holdouts, then add calibration by
+  competition only where sample sizes support it.
+
 ## Codex continuation — 31 August 2026
 
 - The Claude branch was fast-forwarded into `main`, verified, and deployed.
