@@ -15,6 +15,8 @@ type FeatureMatchRow = {
   away_shots_total: number | null;
   home_shots_on: number | null;
   away_shots_on: number | null;
+  home_fouls: number | null;
+  away_fouls: number | null;
   home_possession: number | null;
   away_possession: number | null;
   home_corners: number | null;
@@ -39,6 +41,7 @@ export async function readFeatureHistory(db: D1Database, options: { competitionI
       hs.team_id AS home_statistics_team_id, ast.team_id AS away_statistics_team_id,
       hs.shots_total AS home_shots_total, ast.shots_total AS away_shots_total,
       hs.shots_on AS home_shots_on, ast.shots_on AS away_shots_on,
+      hs.fouls AS home_fouls, ast.fouls AS away_fouls,
       hs.possession AS home_possession, ast.possession AS away_possession,
       hs.corners AS home_corners, ast.corners AS away_corners,
       hs.yellow_cards AS home_yellow_cards, ast.yellow_cards AS away_yellow_cards,
@@ -74,6 +77,7 @@ function statistics(row: FeatureMatchRow, side: 'home' | 'away'): TeamMatchStati
   return {
     shotsTotal: row[`${side}_shots_total`],
     shotsOn: row[`${side}_shots_on`],
+    fouls: row[`${side}_fouls`],
     possession: row[`${side}_possession`],
     corners: row[`${side}_corners`],
     yellowCards: row[`${side}_yellow_cards`],

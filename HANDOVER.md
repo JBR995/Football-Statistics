@@ -10,6 +10,35 @@ Read `## Next, in order` if you only read one section.
 reading, with screenshots of the branch running and a diagram of the
 ingestion path.
 
+## Codex continuation — 2 September 2026
+
+- Historical team match statistics already retain total shots, shots on target,
+  fouls, yellow cards and red cards. Coverage now audits each field separately,
+  so a missing red-card value no longer makes otherwise complete booking data
+  look absent.
+- `fixture_player_statistics` adds one row per fixture, team and player. It
+  stores minutes, rating, position, shots, shots on target, goals, assists,
+  passing, tackles, duels, dribbles, fouls drawn and committed, separate yellow
+  and red cards, and penalty outcomes. The generated production migration is
+  `drizzle/0005_steep_puppet_master.sql`.
+- `scripts/import-match-detail.mjs` accepts `--include players` and reads
+  API-Football's `/fixtures/players` response. The upload is validated, bounded,
+  resumable and refuses orphaned fixtures or duplicate player rows.
+- `GET /api/football/history/coverage` now reports fixture-level player coverage
+  plus exact populated counts for the required team and player fields. Its
+  missing-work endpoint accepts `missing=players`.
+- Match Lab reads stored player records and displays minutes, shots, shots on
+  target, fouls committed/drawn and cards. Data Explorer distinguishes team and
+  player historical storage.
+- Fouls and yellow bookings now enter the leakage-safe rolling feature dataset.
+  Red cards remain independently nullable because the provider commonly omits
+  the field when no dismissal occurred.
+- The mock provider and end-to-end suite cover the new provider response,
+  ingestion, field audit and Match Lab read path. The suite is **37/37**.
+- Next: run the player backfill after the remaining team-statistics phase,
+  starting with the current season and Premier League history. It costs one
+  provider request per fixture and must keep the existing 7,200-call quota guard.
+
 ## Codex continuation — 1 September 2026
 
 - Production and GitHub `main` are aligned through commit `2b10cc0` before the

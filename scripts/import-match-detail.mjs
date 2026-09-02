@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Backfills per-match detail — shot and possession statistics, line-ups and
+// Backfills per-match detail — team and player statistics, line-ups,
 // bookmaker odds, and pre-kickoff availability — for fixtures already stored
 // in the hosted database.
 //
@@ -21,7 +21,7 @@
 //   --env-file <path>   File holding API_FOOTBALL_KEY (default .env.local).
 //   --leagues <ids>     Comma-separated competition ids (default: all 12).
 //   --seasons <range>   e.g. 2021-2025 or 2021,2023 (default 2021-2025).
-//   --include <classes> statistics, lineups, injuries, odds
+//   --include <classes> statistics, players, lineups, injuries, odds
 //                       (default: statistics,lineups,odds).
 //   --budget <n>        Maximum provider calls this run (default 1000).
 //   --batch <n>         Fixtures per upload request (default 25, max 50).
@@ -63,6 +63,7 @@ const COMPETITIONS = [
 
 const CLASSES = {
   statistics: { path: '/fixtures/statistics', parse: parseStatistics },
+  players: { path: '/fixtures/players', parse: parsePlayerStatistics },
   lineups: { path: '/fixtures/lineups', parse: parseLineups },
   injuries: { path: '/injuries', parse: parseInjuries },
   odds: { path: '/odds', parse: parseOdds },
@@ -169,14 +170,14 @@ if (values['dry-run'] || !work.size) process.exit(0);
 
 let calls = 0;
 let uploaded = 0;
-const totals = { statistics: 0, lineups: 0, injuries: 0, odds: 0 };
-const empty = { statistics: 0, lineups: 0, injuries: 0, odds: 0 };
+const totals = { statistics: 0, players: 0, lineups: 0, injuries: 0, odds: 0 };
+const empty = { statistics: 0, players: 0, lineups: 0, injuries: 0, odds: 0 };
 const failures = [];
 let pending = [];
 
 for (const [fixtureId, entry] of work) {
   if (calls >= budget) break;
-  const detail = { fixtureId, statistics: [], lineups: [], injuries: [], odds: [], observed: [] };
+  const detail = { fixtureId, statistics: [], players: [], lineups: [], injuries: [], odds: [], observed: [] };
   let collected = false;
 
   for (const name of entry.classes) {
@@ -206,8 +207,8 @@ for (const [fixtureId, entry] of work) {
 await flush(pending);
 
 console.log(`\n${calls} provider calls, ${uploaded} fixtures uploaded.`);
-console.log(`  statistics rows ${totals.statistics}, line-ups ${totals.lineups}, injuries ${totals.injuries}, odds rows ${totals.odds}`);
-console.log(`  provider had nothing for: ${empty.statistics} statistics, ${empty.lineups} line-ups, ${empty.injuries} injuries, ${empty.odds} odds`);
+console.log(`  team rows ${totals.statistics}, player rows ${totals.players}, line-ups ${totals.lineups}, injuries ${totals.injuries}, odds rows ${totals.odds}`);
+console.log(`  provider had nothing for: ${empty.statistics} team statistics, ${empty.players} player statistics, ${empty.lineups} line-ups, ${empty.injuries} injuries, ${empty.odds} odds`);
 if (failures.length) {
   console.log(`  ${failures.length} failed:`);
   for (const failure of failures.slice(0, 20)) console.log(`    ${failure}`);
@@ -226,7 +227,7 @@ async function flush(details) {
     const body = await response.json().catch(() => null);
     if (!response.ok) throw new Error(body?.error ?? `the site returned ${response.status}`);
     uploaded += body.fixtures ?? details.length;
-    console.log(`  uploaded ${body.fixtures} fixtures (${body.statistics} statistics, ${body.lineups} line-ups, ${body.injuries ?? 0} injuries, ${body.odds} odds, ${body.availabilitySnapshots ?? 0} pre-kickoff snapshots)`);
+    console.log(`  uploaded ${body.fixtures} fixtures (${body.statistics} team rows, ${body.players ?? 0} player rows, ${body.lineups} line-ups, ${body.injuries ?? 0} injuries, ${body.odds} odds, ${body.availabilitySnapshots ?? 0} pre-kickoff snapshots)`);
   } catch (error) {
     failures.push(`upload of ${details.length} fixtures: ${error.message}`);
   }
@@ -273,6 +274,40 @@ function parseStatistics(response) {
     })
     // A row of nothing but a team id is not a statistic worth storing.
     .filter((row) => Object.keys(row).length > 1);
+}
+
+function parsePlayerStatistics(response) {
+  const rows = [];
+  for (const teamEntry of response) {
+    const teamId = teamEntry?.team?.id;
+    if (!teamId) continue;
+    for (const entry of teamEntry.players ?? []) {
+      const player = entry?.player;
+      const statistics = entry?.statistics?.[0];
+      if (!player?.id || !player?.name || !statistics) continue;
+      const games = statistics.games ?? {};
+      rows.push({
+        teamId, playerId: player.id, playerName: player.name,
+        position: games.position ?? null, minutes: number(games.minutes), rating: number(games.rating),
+        captain: boolean(games.captain), substitute: boolean(games.substitute), offsides: number(statistics.offsides),
+        shotsTotal: number(statistics.shots?.total), shotsOn: number(statistics.shots?.on),
+        goals: number(statistics.goals?.total), goalsConceded: number(statistics.goals?.conceded),
+        assists: number(statistics.goals?.assists), saves: number(statistics.goals?.saves),
+        passesTotal: number(statistics.passes?.total), passesKey: number(statistics.passes?.key),
+        passesAccuracy: number(statistics.passes?.accuracy), tackles: number(statistics.tackles?.total),
+        blocks: number(statistics.tackles?.blocks), interceptions: number(statistics.tackles?.interceptions),
+        duels: number(statistics.duels?.total), duelsWon: number(statistics.duels?.won),
+        dribblesAttempts: number(statistics.dribbles?.attempts), dribblesSuccess: number(statistics.dribbles?.success),
+        dribbledPast: number(statistics.dribbles?.past), foulsDrawn: number(statistics.fouls?.drawn),
+        foulsCommitted: number(statistics.fouls?.committed), yellowCards: number(statistics.cards?.yellow),
+        redCards: number(statistics.cards?.red), penaltiesWon: number(statistics.penalty?.won),
+        penaltiesCommitted: number(statistics.penalty?.commited ?? statistics.penalty?.committed),
+        penaltiesScored: number(statistics.penalty?.scored), penaltiesMissed: number(statistics.penalty?.missed),
+        penaltiesSaved: number(statistics.penalty?.saved),
+      });
+    }
+  }
+  return rows;
 }
 
 function parseLineups(response) {
@@ -336,6 +371,12 @@ function number(value) {
   if (value === null || value === undefined) return null;
   const parsed = Number(String(value).replace('%', '').trim());
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function boolean(value) {
+  if (value === true || value === 1 || value === 'true' || value === '1') return true;
+  if (value === false || value === 0 || value === 'false' || value === '0') return false;
+  return null;
 }
 
 async function readMissing(name, league, season, repeatable = false) {

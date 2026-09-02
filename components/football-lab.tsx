@@ -84,7 +84,7 @@ type IntelligenceFeed = {
 };
 type TeamAnalysis = { connected: boolean; team?: { id: number; name: string; logo: string | null }; season?: number; overall?: TeamSplit; home?: TeamSplit; away?: TeamSplit; form?: Array<{ id: number; kickoff: string; opponent: string; location: string; gf: number; ga: number; result: string }>; next?: { id: number; kickoff: string; opponent: string; location: string; venue: string | null } | null; error?: string };
 type TeamSplit = { played: number; won: number; drawn: number; lost: number; gf: number; ga: number; cleanSheets: number; btts: number; over25: number };
-type MatchAnalysis = { connected: boolean; match?: StoredFixture & { round: string | null }; form?: { home: Array<{ opponent: string; gf: number; ga: number; result: string }>; away: Array<{ opponent: string; gf: number; ga: number; result: string }> }; h2h?: Array<{ id: number; home_name: string; away_name: string; home_goals: number; away_goals: number }>; statistics?: Array<{ team: { id: number; name?: string; logo?: string | null }; statistics: Array<{ type: string; value: string | number | null }> }>; statisticsSource?: 'stored' | 'provider' | null; lineups?: Array<{ teamId: number; formation: string | null; coach: string | null; starters: Array<{ name: string; number: number | null; position: string | null }>; substitutes: Array<{ name: string }> }>; odds?: Array<{ bookmakerId: number; bookmaker: string; prices: { home: number | null; draw: number | null; away: number | null; over25: number | null; under25: number | null; bttsYes: number | null; bttsNo: number | null } }>; market?: { bookmakers: number; overround: number; probabilities: { home: number; draw: number; away: number } } | null; error?: string };
+type MatchAnalysis = { connected: boolean; match?: StoredFixture & { round: string | null }; form?: { home: Array<{ opponent: string; gf: number; ga: number; result: string }>; away: Array<{ opponent: string; gf: number; ga: number; result: string }> }; h2h?: Array<{ id: number; home_name: string; away_name: string; home_goals: number; away_goals: number }>; statistics?: Array<{ team: { id: number; name?: string; logo?: string | null }; statistics: Array<{ type: string; value: string | number | null }> }>; statisticsSource?: 'stored' | 'provider' | null; players?: Array<{ teamId: number; playerId: number; playerName: string; position: string | null; minutes: number | null; shotsTotal: number | null; shotsOn: number | null; foulsDrawn: number | null; foulsCommitted: number | null; yellowCards: number | null; redCards: number | null }>; lineups?: Array<{ teamId: number; formation: string | null; coach: string | null; starters: Array<{ name: string; number: number | null; position: string | null }>; substitutes: Array<{ name: string }> }>; odds?: Array<{ bookmakerId: number; bookmaker: string; prices: { home: number | null; draw: number | null; away: number | null; over25: number | null; under25: number | null; bttsYes: number | null; bttsNo: number | null } }>; market?: { bookmakers: number; overround: number; probabilities: { home: number; draw: number; away: number } } | null; error?: string };
 type BaselinePrediction = {
   connected: boolean;
   fixture?: { id: number; competition: string; season: number; kickoff: string; round: string | null; venue: string | null; home: StoredFixture['home']; away: StoredFixture['away'] };
@@ -138,7 +138,7 @@ type FeatureReadinessFeed = {
     readyCompetitions: number;
     matches: number;
     eligibleRows: number;
-    coverage: { core: number; possession: number; corners: number; cards: number; passing: number; expectedGoals: number };
+    coverage: { core: number; possession: number; corners: number; fouls: number; yellowCards: number; redCards: number; passing: number; expectedGoals: number };
   };
   readiness?: Array<{
     competitionId: number;
@@ -150,7 +150,7 @@ type FeatureReadinessFeed = {
     eligibleRows: number;
     firstEligibleKickoff: string | null;
     lastEligibleKickoff: string | null;
-    coverage: { statistics: number; core: number; possession: number; corners: number; cards: number; passing: number; expectedGoals: number };
+    coverage: { statistics: number; core: number; possession: number; corners: number; fouls: number; yellowCards: number; redCards: number; passing: number; expectedGoals: number };
     state: 'ready' | 'building' | 'awaiting-statistics';
   }>;
   methodology?: string;
@@ -214,11 +214,24 @@ type DetailCoverageFeed = {
     fixtures: number;
     completed: number;
     statistics: { stored: number; of: number };
+    players: { stored: number; of: number };
     lineups: { stored: number; of: number };
     availability: { stored: number; of: number };
     odds: { stored: number; of: number };
   };
+  fields?: {
+    team: StatisticFieldCoverage;
+    player: StatisticFieldCoverage;
+  };
   error?: string;
+};
+type StatisticFieldCoverage = {
+  rows: number;
+  shots: { stored: number; of: number };
+  shotsOnTarget: { stored: number; of: number };
+  fouls: { stored: number; of: number };
+  yellowCards: { stored: number; of: number };
+  redCards: { stored: number; of: number };
 };
 type ForecastRecordFeed = {
   connected: boolean;
@@ -512,6 +525,7 @@ function MatchAnalysisDialog({ open, onOpenChange, data, loading }: { open: bool
   const statTypes = ['Shots on Goal', 'Ball Possession', 'Total passes', 'Passes accurate', 'Corner Kicks', 'Fouls', 'Yellow Cards'];
   const stat = (teamIndex: number, type: string) => data?.statistics?.[teamIndex]?.statistics.find((item) => item.type === type)?.value ?? '—';
   return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto border-primary/15 bg-[#111a24] sm:max-w-3xl"><DialogHeader><DialogTitle>{match ? `${match.home.name} ${match.score.home}–${match.score.away} ${match.away.name}` : 'Match analysis'}</DialogTitle><DialogDescription>{match ? `${formatKickoff(match.kickoff)} · ${match.venue ?? match.round ?? ''}` : 'Loading stored match evidence.'}</DialogDescription></DialogHeader>{loading ? <div className="flex min-h-52 items-center justify-center"><LoaderCircle className="animate-spin text-primary" /></div> : !data?.connected || !match ? <p className="text-sm text-amber-100">{data?.error}</p> : <div className="grid gap-5 md:grid-cols-2"><div><p className="mb-3 text-xs font-semibold uppercase tracking-[.14em] text-muted-foreground">Recent form before kickoff</p>{(['home', 'away'] as const).map((side) => <div key={side} className="mb-4 rounded-xl border border-white/8 p-3"><p className="mb-2 font-medium">{match[side].name}</p><div className="flex flex-wrap gap-2">{data.form?.[side].map((item, index) => <Badge key={index} variant="outline" className={item.result === 'W' ? 'text-primary' : item.result === 'D' ? 'text-amber-200' : 'text-red-200'}>{item.result} {item.gf}–{item.ga} {item.opponent}</Badge>)}</div></div>)}</div><div><div className="mb-3 flex items-center justify-between gap-2"><p className="text-xs font-semibold uppercase tracking-[.14em] text-muted-foreground">Match statistics</p>{data.statisticsSource && <Badge variant="outline" className={data.statisticsSource === 'stored' ? 'border-primary/25 text-primary' : 'text-amber-200'}>{data.statisticsSource === 'stored' ? 'From the database' : 'Live from provider'}</Badge>}</div><div className="rounded-xl border border-white/8">{statTypes.map((type) => <div key={type} className="grid grid-cols-[1fr_1.6fr_1fr] border-b border-white/6 px-3 py-2 text-sm last:border-0"><span className="text-left font-mono text-primary">{stat(0, type)}</span><span className="text-center text-xs text-muted-foreground">{type}</span><span className="text-right font-mono text-sky-300">{stat(1, type)}</span></div>)}</div>{!data.statistics?.length && <p className="mt-2 text-[11px] text-muted-foreground">No match statistics are stored for this fixture, and the provider supplied none.</p>}
+      {Boolean(data.players?.length) && <div className="mt-4"><p className="mb-2 text-xs font-semibold uppercase tracking-[.14em] text-muted-foreground">Player shots, cards and fouls</p><div className="max-h-64 overflow-auto rounded-xl border border-white/8"><table className="w-full min-w-[480px] text-xs"><thead className="sticky top-0 bg-[#111a24] text-[9px] uppercase tracking-[.1em] text-muted-foreground"><tr><th className="px-2 py-2 text-left">Player</th><th>Min</th><th>Shots</th><th>On target</th><th>Fouls C/D</th><th>Cards</th></tr></thead><tbody>{data.players?.map((player) => <tr key={`${player.teamId}:${player.playerId}`} className="border-t border-white/6"><td className="px-2 py-2"><span className="font-medium">{player.playerName}</span><span className="ml-1 text-[9px] text-muted-foreground">{player.position ?? ''}</span></td><td className="text-center font-mono">{player.minutes ?? '—'}</td><td className="text-center font-mono">{player.shotsTotal ?? '—'}</td><td className="text-center font-mono">{player.shotsOn ?? '—'}</td><td className="text-center font-mono">{player.foulsCommitted ?? '—'}/{player.foulsDrawn ?? '—'}</td><td className="text-center font-mono">{player.yellowCards ?? '—'}Y · {player.redCards ?? '—'}R</td></tr>)}</tbody></table></div></div>}
       {Boolean(data.lineups?.length) && <div className="mt-4"><p className="mb-2 text-xs font-semibold uppercase tracking-[.14em] text-muted-foreground">Line-ups</p><div className="grid grid-cols-2 gap-2">{data.lineups?.map((lineup) => <div key={lineup.teamId} className="rounded-xl border border-white/8 p-3"><p className="font-mono text-sm text-primary">{lineup.formation ?? '—'}</p><p className="mt-0.5 text-[10px] text-muted-foreground">{lineup.coach ?? 'Coach not recorded'} · {lineup.starters.length} started, {lineup.substitutes.length} on the bench</p></div>)}</div></div>}
       {data.market && <div className="mt-4"><p className="mb-2 text-xs font-semibold uppercase tracking-[.14em] text-muted-foreground">Market price</p><div className="rounded-xl border border-white/8 p-3"><div className="grid grid-cols-3 gap-2 text-center">{([['Home', data.market.probabilities.home], ['Draw', data.market.probabilities.draw], ['Away', data.market.probabilities.away]] as const).map(([label, value]) => <div key={label}><p className="font-mono text-lg text-primary">{value}%</p><p className="text-[10px] text-muted-foreground">{label}</p></div>)}</div><p className="mt-2 text-[10px] leading-4 text-muted-foreground">Averaged across {data.market.bookmakers} bookmaker{data.market.bookmakers === 1 ? '' : 's'} with the {Math.round((data.market.overround - 1) * 1000) / 10}% margin divided out. This is the benchmark the model has to beat, not a second opinion.</p></div></div>}</div></div>}</DialogContent></Dialog>;
 }
@@ -793,6 +807,7 @@ function DataExplorer({ feed, loading }: { feed: CompetitionFeed | null; loading
 // so plainly rather than describing an intention.
 function readinessRows(coverage: DetailCoverageFeed | null) {
   const summary = coverage?.summary;
+  const fields = coverage?.fields;
   const share = (stored: number | undefined, of: number | undefined) =>
     stored && of ? `${stored.toLocaleString()} of ${of.toLocaleString()} matches` : 'nothing stored yet';
   const stored = (count: number | undefined) => (count ?? 0) > 0;
@@ -816,11 +831,18 @@ function readinessRows(coverage: DetailCoverageFeed | null) {
       copy: 'Elo, Bayesian attack/defence and Poisson outputs use stored pre-kickoff evidence. Forecasts recorded before kickoff are scored in Models.',
     },
     {
-      label: 'Shots, possession and passing',
+      label: 'Team shots, cards and fouls',
       state: stored(summary?.statistics.stored) ? 'Stored' : 'Live only',
       copy: stored(summary?.statistics.stored)
-        ? `Shot, possession, passing and card counts for ${share(summary?.statistics.stored, summary?.statistics.of)}, with expected goals where the provider supplies them.`
+        ? `${share(summary?.statistics.stored, summary?.statistics.of)} have team match statistics. Across ${fields?.team.rows.toLocaleString() ?? 0} team rows: ${fields?.team.shotsOnTarget.stored.toLocaleString() ?? 0} shots-on-target, ${fields?.team.fouls.stored.toLocaleString() ?? 0} foul and ${fields?.team.yellowCards.stored.toLocaleString() ?? 0} yellow-card fields are populated.`
         : 'Available in provider match views. Run the match-detail importer to retain them across seasons.',
+    },
+    {
+      label: 'Player shots, cards and fouls',
+      state: stored(summary?.players.stored) ? 'Stored' : 'Live only',
+      copy: stored(summary?.players.stored)
+        ? `${share(summary?.players.stored, summary?.players.of)} have player-level records. ${fields?.player.rows.toLocaleString() ?? 0} player appearances are stored, including shots, shots on target, fouls committed and drawn, and separate yellow/red cards.`
+        : 'The database and importer are ready. The quota-controlled player backfill will retain shots, shots on target, fouls committed/drawn and yellow/red cards per player.',
     },
     {
       label: 'Line-ups and formations',

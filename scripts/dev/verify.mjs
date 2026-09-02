@@ -153,9 +153,19 @@ try {
   ]);
   check('match detail imports', detail.code === 0, detail.output.trim().split('\n').filter((line) => line.includes('provider calls')).at(-1));
 
+  const playerDetail = await runScript('scripts/import-match-detail.mjs', [
+    '--site', site, '--token', 'dev', '--provider', provider,
+    '--leagues', String(LEAGUE), '--seasons', String(SEASON), '--include', 'players',
+    '--budget', '20', '--batch', '20', '--delay', '0', '--retry-empty',
+  ]);
+  check('player match detail imports', playerDetail.code === 0, playerDetail.output.trim().split('\n').filter((line) => line.includes('provider calls')).at(-1));
+
   const coverage = await api('/api/football/history/coverage');
   const detailRow = coverage.body?.seasons?.find((row) => row.competitionId === LEAGUE && row.season === SEASON);
   check('statistics are stored', (detailRow?.statistics ?? 0) > 0, `${detailRow?.statistics} of ${detailRow?.completed} played matches`);
+  check('player statistics are stored', (detailRow?.players ?? 0) > 0, `${detailRow?.players} matches`);
+  check('required team fields are audited', (coverage.body?.fields?.team?.shotsOnTarget?.stored ?? 0) > 0 && (coverage.body?.fields?.team?.fouls?.stored ?? 0) > 0 && (coverage.body?.fields?.team?.yellowCards?.stored ?? 0) > 0, `${coverage.body?.fields?.team?.rows ?? 0} team rows`);
+  check('required player fields are audited', (coverage.body?.fields?.player?.shotsOnTarget?.stored ?? 0) > 0 && (coverage.body?.fields?.player?.fouls?.stored ?? 0) > 0 && (coverage.body?.fields?.player?.yellowCards?.stored ?? 0) > 0, `${coverage.body?.fields?.player?.rows ?? 0} player rows`);
   check('line-ups are stored', (detailRow?.lineups ?? 0) > 0, `${detailRow?.lineups} matches`);
   check('odds are stored', (detailRow?.odds ?? 0) > 0, `${detailRow?.odds} matches`);
   check('availability snapshots are stored', (detailRow?.availability ?? 0) > 0, `${detailRow?.availability} fixtures captured before kickoff`);
@@ -184,11 +194,14 @@ try {
 
   const withDetail = await api(`/api/football/history/coverage?missing=statistics&league=${LEAGUE}&season=${SEASON}&limit=5`);
   check('outstanding work is listable', typeof withDetail.body?.remaining === 'number', `${withDetail.body?.remaining} fixtures still without statistics`);
+  const withPlayers = await api(`/api/football/history/coverage?missing=players&league=${LEAGUE}&season=${SEASON}&limit=5`);
+  check('outstanding player work is listable', typeof withPlayers.body?.remaining === 'number', `${withPlayers.body?.remaining} fixtures still without player statistics`);
 
   const sample = await firstFixtureWithStatistics();
   if (sample) {
     const match = await api(`/api/football/match?fixture=${sample}`);
     check('the match view reads stored detail', match.body?.statisticsSource === 'stored', `source: ${match.body?.statisticsSource}`);
+    check('the match view reads player records', (match.body?.players?.length ?? 0) > 0, `${match.body?.players?.length ?? 0} player rows`);
     check('the market price is derived', Boolean(match.body?.market), match.body?.market ? `${match.body.market.probabilities.home}/${match.body.market.probabilities.draw}/${match.body.market.probabilities.away} at ${match.body.market.overround} overround` : 'no odds');
   } else {
     check('the match view reads stored detail', false, 'no fixture with statistics found');

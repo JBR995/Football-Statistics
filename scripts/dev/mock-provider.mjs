@@ -47,6 +47,8 @@ export function createMockProvider(port = 8899) {
         return send({ errors: [], response: season(Number(url.searchParams.get('league')), Number(url.searchParams.get('season'))) });
       case '/fixtures/statistics':
         return send({ errors: [], response: statistics(fixture) });
+      case '/fixtures/players':
+        return send({ errors: [], response: playerStatistics(fixture) });
       case '/fixtures/lineups':
         return send({ errors: [], response: lineups(fixture) });
       case '/injuries':
@@ -154,6 +156,28 @@ function lineups(fixture) {
     })),
     substitutes: Array.from({ length: 7 }, (_, index) => ({
       player: { id: id * 100 + 50 + index, name: `Sub ${id}-${index}`, number: 12 + index, pos: 'M', grid: null },
+    })),
+  }));
+}
+
+function playerStatistics(fixture) {
+  return teamsOf(fixture).map((id, side) => ({
+    team: { id, name: `Team ${id}` },
+    players: Array.from({ length: 14 }, (_, index) => ({
+      player: { id: id * 100 + index, name: `Player ${id}-${index}` },
+      statistics: [{
+        games: { minutes: index < 11 ? 90 - (index % 3) * 5 : 15, position: ['G', 'D', 'M', 'F'][Math.min(3, Math.floor(index / 3))], rating: (6.1 + ((fixture + index) % 18) / 10).toFixed(1), captain: index === 1, substitute: index >= 11 },
+        offsides: index > 8 ? index % 2 : null,
+        shots: { total: index > 6 ? (index + side) % 4 : 0, on: index > 6 ? (index + fixture) % 3 : 0 },
+        goals: { total: index === 9 ? 1 : 0, conceded: index === 0 ? 1 + side : 0, assists: index === 8 ? 1 : 0, saves: index === 0 ? 3 + side : 0 },
+        passes: { total: 18 + index * 4, key: index > 5 ? index % 3 : 0, accuracy: `${72 + index}%` },
+        tackles: { total: index < 9 ? index % 4 : 0, blocks: index < 5 ? index % 2 : 0, interceptions: index < 8 ? index % 3 : 0 },
+        duels: { total: 3 + index % 7, won: 2 + index % 4 },
+        dribbles: { attempts: index > 5 ? index % 4 : 0, success: index > 5 ? index % 3 : 0, past: index < 9 ? index % 2 : 0 },
+        fouls: { drawn: index % 3, committed: (index + side) % 3 },
+        cards: { yellow: index === 4 || index === 8 ? 1 : 0, red: index === 13 && fixture % 17 === 0 ? 1 : null },
+        penalty: { won: 0, commited: 0, scored: 0, missed: 0, saved: 0 },
+      }],
     })),
   }));
 }

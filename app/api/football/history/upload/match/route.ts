@@ -1,5 +1,5 @@
 import { ensureFootballSchema } from '@/db/football';
-import { readKnownFixtures, storeMatchDetail, type BookmakerOdds, type LineupPlayer, type MatchDetail, type PlayerInjury, type TeamLineup, type TeamStatistics } from '@/db/match-detail';
+import { readKnownFixtures, storeMatchDetail, type BookmakerOdds, type LineupPlayer, type MatchDetail, type PlayerInjury, type PlayerStatistics, type TeamLineup, type TeamStatistics } from '@/db/match-detail';
 
 // Per-match detail collected by a local importer: shot and possession counts,
 // line-ups, and bookmaker prices. Like the season upload, the provider call
@@ -13,6 +13,7 @@ const MAX_TEAMS = 2;
 const MAX_BOOKMAKERS = 30;
 const MAX_PLAYERS = 30;
 const MAX_INJURIES = 80;
+const MAX_PLAYER_STATISTICS = 80;
 // Passing totals regularly exceed 500; 5,000 still rejects implausible or
 // accidentally cumulative values while accommodating real match data.
 const MAX_COUNT = 5000;
@@ -67,6 +68,7 @@ function parseDetail(entry: unknown, index: number): MatchDetail | string {
   if (fixtureId === null) return `${at} has no valid fixture id.`;
 
   const statistics: TeamStatistics[] = [];
+  const players: PlayerStatistics[] = [];
   const lineups: TeamLineup[] = [];
   const odds: BookmakerOdds[] = [];
   const injuries: PlayerInjury[] = [];
@@ -100,6 +102,15 @@ function parseDetail(entry: unknown, index: number): MatchDetail | string {
     }
   }
 
+  if (row.players !== undefined && row.players !== null) {
+    if (!Array.isArray(row.players) || row.players.length > MAX_PLAYER_STATISTICS) return `${at} must carry statistics for at most ${MAX_PLAYER_STATISTICS} players.`;
+    for (const item of row.players) {
+      const parsed = parsePlayerStatistics(item, at);
+      if (typeof parsed === 'string') return parsed;
+      players.push(parsed);
+    }
+  }
+
   if (row.injuries !== undefined && row.injuries !== null) {
     if (!Array.isArray(row.injuries) || row.injuries.length > MAX_INJURIES) return `${at} must carry at most ${MAX_INJURIES} injuries.`;
     for (const item of row.injuries) {
@@ -109,12 +120,42 @@ function parseDetail(entry: unknown, index: number): MatchDetail | string {
     }
   }
 
-  if (!statistics.length && !lineups.length && !odds.length && !injuries.length && !observed.length) return `${at} carries no statistics, line-ups, injuries or odds.`;
+  if (!statistics.length && !players.length && !lineups.length && !odds.length && !injuries.length && !observed.length) return `${at} carries no team statistics, player statistics, line-ups, injuries or odds.`;
   if (duplicateTeams(statistics)) return `${at} repeats a team in its statistics.`;
   if (duplicateTeams(lineups)) return `${at} repeats a team in its line-ups.`;
+  if (new Set(players.map((player) => `${player.teamId}:${player.playerId}`)).size !== players.length) return `${at} repeats a player statistics row.`;
   if (new Set(odds.map((book) => book.bookmakerId)).size !== odds.length) return `${at} repeats a bookmaker.`;
 
-  return { fixtureId, statistics, lineups, odds, injuries, observed };
+  return { fixtureId, statistics, players, lineups, odds, injuries, observed };
+}
+
+function parsePlayerStatistics(entry: unknown, at: string): PlayerStatistics | string {
+  if (!entry || typeof entry !== 'object') return `${at} has a malformed player statistics entry.`;
+  const row = entry as Record<string, unknown>;
+  const teamId = identifier(row.teamId);
+  const playerId = identifier(row.playerId);
+  const playerName = optionalText(row.playerName, 120);
+  if (teamId === null || playerId === null) return `${at} has player statistics with an invalid team or player id.`;
+  if (!playerName) return `${at} has player statistics with no player name.`;
+
+  const parsed: Record<string, number | null> = {};
+  for (const key of ['offsides', 'shotsTotal', 'shotsOn', 'goals', 'goalsConceded', 'assists', 'saves', 'passesTotal', 'passesKey', 'tackles', 'blocks', 'interceptions', 'duels', 'duelsWon', 'dribblesAttempts', 'dribblesSuccess', 'dribbledPast', 'foulsDrawn', 'foulsCommitted', 'yellowCards', 'redCards', 'penaltiesWon', 'penaltiesCommitted', 'penaltiesScored', 'penaltiesMissed', 'penaltiesSaved'] as const) {
+    const value = count(row[key]);
+    if (value === false) return `${at} has an invalid player ${key} value.`;
+    parsed[key] = value;
+  }
+  const minutes = bounded(row.minutes, 0, 300);
+  const rating = bounded(row.rating, 0, 10);
+  const passesAccuracy = bounded(row.passesAccuracy, 0, 100);
+  if (minutes === false || rating === false || passesAccuracy === false) return `${at} has invalid player minutes, rating or pass accuracy.`;
+  const captain = optionalBoolean(row.captain);
+  const substitute = optionalBoolean(row.substitute);
+  if (captain === 'invalid' || substitute === 'invalid') return `${at} has invalid player role flags.`;
+  return {
+    teamId, playerId, playerName, position: optionalText(row.position, 20), minutes, rating,
+    captain, substitute, passesAccuracy,
+    ...(parsed as Omit<PlayerStatistics, 'teamId' | 'playerId' | 'playerName' | 'position' | 'minutes' | 'rating' | 'captain' | 'substitute' | 'passesAccuracy'>),
+  };
 }
 
 function parseObserved(value: unknown): Array<'lineups' | 'injuries'> | string {
@@ -239,6 +280,13 @@ function optionalText(value: unknown, maxLength: number) {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   return trimmed && trimmed.length <= maxLength ? trimmed : null;
+}
+
+function optionalBoolean(value: unknown): boolean | null | 'invalid' {
+  if (value === null || value === undefined) return null;
+  if (value === true || value === 1) return true;
+  if (value === false || value === 0) return false;
+  return 'invalid';
 }
 
 // `false` marks an invalid value; `null` is a statistic the provider omitted.

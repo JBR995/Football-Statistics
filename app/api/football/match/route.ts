@@ -1,5 +1,5 @@
 import { ensureFootballSchema } from '@/db/football';
-import { readStoredLineups, readStoredOdds, readStoredStatistics } from '@/db/match-detail-read';
+import { readStoredLineups, readStoredOdds, readStoredPlayerStatistics, readStoredStatistics } from '@/db/match-detail-read';
 
 type MatchRow = { id: number; competition_id: number; season: number; kickoff: string; status: string; round: string | null; venue: string | null; home_team_id: number; home_name: string; home_logo: string | null; away_team_id: number; away_name: string; away_logo: string | null; home_goals: number | null; away_goals: number | null };
 
@@ -25,12 +25,13 @@ export async function GET(request: Request) {
       if (response.ok) statistics = ((await response.json()) as { response?: ProviderStatistics }).response ?? [];
       if (statistics.length) statisticsSource = 'provider';
     }
-    const [lineups, odds] = await Promise.all([
+    const [lineups, players, odds] = await Promise.all([
       readStoredLineups(db, fixtureId, teamOrder),
+      readStoredPlayerStatistics(db, fixtureId, teamOrder),
       readStoredOdds(db, fixtureId),
     ]);
 
-    return Response.json({ connected: true, match: { id: match.id, kickoff: match.kickoff, status: match.status, round: match.round, venue: match.venue, home: { id: match.home_team_id, name: match.home_name, logo: match.home_logo }, away: { id: match.away_team_id, name: match.away_name, logo: match.away_logo }, score: { home: match.home_goals, away: match.away_goals } }, form: { home: form(match.home_team_id), away: form(match.away_team_id) }, h2h, statistics, statisticsSource, lineups, odds: odds.bookmakers, market: odds.market }, { headers: { 'Cache-Control': 'public, s-maxage=900, stale-while-revalidate=1800' } });
+    return Response.json({ connected: true, match: { id: match.id, kickoff: match.kickoff, status: match.status, round: match.round, venue: match.venue, home: { id: match.home_team_id, name: match.home_name, logo: match.home_logo }, away: { id: match.away_team_id, name: match.away_name, logo: match.away_logo }, score: { home: match.home_goals, away: match.away_goals } }, form: { home: form(match.home_team_id), away: form(match.away_team_id) }, h2h, statistics, statisticsSource, players, lineups, odds: odds.bookmakers, market: odds.market }, { headers: { 'Cache-Control': 'public, s-maxage=900, stale-while-revalidate=1800' } });
   } catch {
     return Response.json({ connected: false, error: 'Match analysis could not be loaded.' }, { status: 500 });
   }

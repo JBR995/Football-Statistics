@@ -4,6 +4,7 @@ export const MINIMUM_TEAM_HISTORY = 5;
 export type TeamMatchStatistics = {
   shotsTotal: number | null;
   shotsOn: number | null;
+  fouls: number | null;
   possession: number | null;
   corners: number | null;
   yellowCards: number | null;
@@ -37,6 +38,7 @@ type TeamObservation = {
   possession: number | null;
   cornersFor: number | null;
   cornersAgainst: number | null;
+  fouls: number | null;
   cardPoints: number | null;
   passAccuracy: number | null;
   expectedGoalsFor: number | null;
@@ -69,6 +71,8 @@ export type PreMatchFeatureRow = {
   homeCornersAgainst: number | null;
   awayCornersFor: number | null;
   awayCornersAgainst: number | null;
+  homeFouls: number | null;
+  awayFouls: number | null;
   homeCardPoints: number | null;
   awayCardPoints: number | null;
   homePassAccuracy: number | null;
@@ -96,7 +100,9 @@ export type FeatureAudit = {
     core: number;
     possession: number;
     corners: number;
-    cards: number;
+    fouls: number;
+    yellowCards: number;
+    redCards: number;
     passing: number;
     expectedGoals: number;
   };
@@ -106,7 +112,7 @@ export function buildPreMatchFeatures(matches: FeatureMatch[]) {
   const ordered = [...matches].sort((a, b) => a.kickoff.localeCompare(b.kickoff) || a.id - b.id);
   const histories = new Map<number, TeamObservation[]>();
   const rows: PreMatchFeatureRow[] = [];
-  const availability = { statistics: 0, core: 0, possession: 0, corners: 0, cards: 0, passing: 0, expectedGoals: 0 };
+  const availability = { statistics: 0, core: 0, possession: 0, corners: 0, fouls: 0, yellowCards: 0, redCards: 0, passing: 0, expectedGoals: 0 };
 
   for (const match of ordered) {
     countAvailability(match.homeStatistics, availability);
@@ -137,7 +143,9 @@ export function buildPreMatchFeatures(matches: FeatureMatch[]) {
       core: percent(availability.core),
       possession: percent(availability.possession),
       corners: percent(availability.corners),
-      cards: percent(availability.cards),
+      fouls: percent(availability.fouls),
+      yellowCards: percent(availability.yellowCards),
+      redCards: percent(availability.redCards),
       passing: percent(availability.passing),
       expectedGoals: percent(availability.expectedGoals),
     },
@@ -173,6 +181,8 @@ function toFeatureRow(match: FeatureMatch, home: TeamObservation[], away: TeamOb
     homeCornersAgainst: averageOptional(home, 'cornersAgainst'),
     awayCornersFor: averageOptional(away, 'cornersFor'),
     awayCornersAgainst: averageOptional(away, 'cornersAgainst'),
+    homeFouls: averageOptional(home, 'fouls'),
+    awayFouls: averageOptional(away, 'fouls'),
     homeCardPoints: averageOptional(home, 'cardPoints'),
     awayCardPoints: averageOptional(away, 'cardPoints'),
     homePassAccuracy: averageOptional(home, 'passAccuracy'),
@@ -203,7 +213,10 @@ function observation(match: FeatureMatch, home: boolean): TeamObservation {
     possession: own?.possession ?? null,
     cornersFor: own?.corners ?? null,
     cornersAgainst: opponent?.corners ?? null,
-    cardPoints: own && own.yellowCards !== null && own.redCards !== null ? own.yellowCards + own.redCards * 3 : null,
+    fouls: own?.fouls ?? null,
+    // Yellow cards are consistently supplied; red cards remain separately
+    // nullable because the provider often omits the field when there was none.
+    cardPoints: own?.yellowCards ?? null,
     passAccuracy: own && own.passesTotal !== null && own.passesTotal > 0 && own.passesAccurate !== null ? own.passesAccurate * 100 / own.passesTotal : null,
     expectedGoalsFor: own?.expectedGoals ?? null,
     expectedGoalsAgainst: opponent?.expectedGoals ?? null,
@@ -244,7 +257,9 @@ function countAvailability(statistics: TeamMatchStatistics | null, counts: Recor
   if (statistics.shotsTotal !== null && statistics.shotsOn !== null) counts.core++;
   if (statistics.possession !== null) counts.possession++;
   if (statistics.corners !== null) counts.corners++;
-  if (statistics.yellowCards !== null && statistics.redCards !== null) counts.cards++;
+  if (statistics.fouls !== null) counts.fouls++;
+  if (statistics.yellowCards !== null) counts.yellowCards++;
+  if (statistics.redCards !== null) counts.redCards++;
   if (statistics.passesTotal !== null && statistics.passesAccurate !== null) counts.passing++;
   if (statistics.expectedGoals !== null) counts.expectedGoals++;
 }

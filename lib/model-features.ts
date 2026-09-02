@@ -31,6 +31,7 @@ const FEATURES: FeatureDefinition[] = [
   { key: 'away_shots_on_balance', label: 'Away shots-on-target balance', value: (row) => row.awayShotsOnFor - row.awayShotsOnAgainst },
   { key: 'possession_edge', label: 'Possession edge', value: (row) => difference(row.homePossession, row.awayPossession) },
   { key: 'corner_balance_edge', label: 'Corner balance edge', value: (row) => difference(balance(row.homeCornersFor, row.homeCornersAgainst), balance(row.awayCornersFor, row.awayCornersAgainst)) },
+  { key: 'foul_edge', label: 'Foul-count edge', value: (row) => difference(row.awayFouls, row.homeFouls) },
   { key: 'discipline_edge', label: 'Discipline edge', value: (row) => difference(row.awayCardPoints, row.homeCardPoints) },
   { key: 'passing_edge', label: 'Pass accuracy edge', value: (row) => difference(row.homePassAccuracy, row.awayPassAccuracy) },
   { key: 'xg_balance_edge', label: 'Expected-goals balance edge', value: (row) => difference(balance(row.homeExpectedGoalsFor, row.homeExpectedGoalsAgainst), balance(row.awayExpectedGoalsFor, row.awayExpectedGoalsAgainst)) },

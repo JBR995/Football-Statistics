@@ -32,6 +32,20 @@ type LineupRow = {
   substitutes: string;
 };
 
+type PlayerStatisticsRow = {
+  team_id: number;
+  player_id: number;
+  player_name: string;
+  position: string | null;
+  minutes: number | null;
+  shots_total: number | null;
+  shots_on: number | null;
+  fouls_drawn: number | null;
+  fouls_committed: number | null;
+  yellow_cards: number | null;
+  red_cards: number | null;
+};
+
 type OddsRow = {
   bookmaker_id: number;
   bookmaker: string;
@@ -87,6 +101,29 @@ export async function readStoredLineups(db: D1Database, fixtureId: number, teamO
     coach: row.coach,
     starters: parsePlayers(row.starters),
     substitutes: parsePlayers(row.substitutes),
+  }));
+}
+
+export async function readStoredPlayerStatistics(db: D1Database, fixtureId: number, teamOrder: number[]) {
+  const rows = (await db.prepare(`
+    SELECT team_id, player_id, player_name, position, minutes, shots_total, shots_on,
+           fouls_drawn, fouls_committed, yellow_cards, red_cards
+    FROM fixture_player_statistics
+    WHERE fixture_id = ?
+    ORDER BY team_id, minutes DESC, player_name
+  `).bind(fixtureId).all<PlayerStatisticsRow>()).results;
+  return order(rows, teamOrder, (row) => row.team_id).map((row) => ({
+    teamId: row.team_id,
+    playerId: row.player_id,
+    playerName: row.player_name,
+    position: row.position,
+    minutes: row.minutes,
+    shotsTotal: row.shots_total,
+    shotsOn: row.shots_on,
+    foulsDrawn: row.fouls_drawn,
+    foulsCommitted: row.fouls_committed,
+    yellowCards: row.yellow_cards,
+    redCards: row.red_cards,
   }));
 }
 
