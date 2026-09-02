@@ -41,6 +41,7 @@ export type PlayerStatistics = {
   saves: number | null;
   passesTotal: number | null;
   passesKey: number | null;
+  // Provider name: passes.accuracy; value is an accurate-pass count.
   passesAccuracy: number | null;
   tackles: number | null;
   blocks: number | null;

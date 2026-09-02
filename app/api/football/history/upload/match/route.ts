@@ -146,8 +146,10 @@ function parsePlayerStatistics(entry: unknown, at: string): PlayerStatistics | s
   }
   const minutes = bounded(row.minutes, 0, 300);
   const rating = bounded(row.rating, 0, 10);
-  const passesAccuracy = bounded(row.passesAccuracy, 0, 100);
-  if (minutes === false || rating === false || passesAccuracy === false) return `${at} has invalid player minutes, rating or pass accuracy.`;
+  // API-Football labels this field "accuracy", but fixture-player responses
+  // contain an accurate-pass count rather than a bounded percentage.
+  const passesAccuracy = count(row.passesAccuracy);
+  if (minutes === false || rating === false || passesAccuracy === false) return `${at} has invalid player minutes, rating or accurate-pass count.`;
   const captain = optionalBoolean(row.captain);
   const substitute = optionalBoolean(row.substitute);
   if (captain === 'invalid' || substitute === 'invalid') return `${at} has invalid player role flags.`;

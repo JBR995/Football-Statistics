@@ -170,7 +170,7 @@ function playerStatistics(fixture) {
         offsides: index > 8 ? index % 2 : null,
         shots: { total: index > 6 ? (index + side) % 4 : 0, on: index > 6 ? (index + fixture) % 3 : 0 },
         goals: { total: index === 9 ? 1 : 0, conceded: index === 0 ? 1 + side : 0, assists: index === 8 ? 1 : 0, saves: index === 0 ? 3 + side : 0 },
-        passes: { total: 18 + index * 4, key: index > 5 ? index % 3 : 0, accuracy: `${72 + index}%` },
+        passes: { total: 90 + index * 5, key: index > 5 ? index % 3 : 0, accuracy: 72 + index * 3 },
         tackles: { total: index < 9 ? index % 4 : 0, blocks: index < 5 ? index % 2 : 0, interceptions: index < 8 ? index % 3 : 0 },
         duels: { total: 3 + index % 7, won: 2 + index % 4 },
         dribbles: { attempts: index > 5 ? index % 4 : 0, success: index > 5 ? index % 3 : 0, past: index < 9 ? index % 2 : 0 },
