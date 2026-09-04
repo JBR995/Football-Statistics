@@ -1,4 +1,4 @@
-import type { LineupPlayer } from '@/db/match-detail';
+import type { LineupPlayer, PlayerInjury, TeamLineup } from '@/db/match-detail';
 
 // Reading side of the per-match detail tables. The statistics come back in the
 // provider's {type, value} shape so a stored match and a live one render the
@@ -56,6 +56,12 @@ type OddsRow = {
   under25_odds: number | null;
   btts_yes_odds: number | null;
   btts_no_odds: number | null;
+};
+
+type AvailabilityRow = {
+  lineups: string;
+  injuries: string;
+  captured_at: string;
 };
 
 const LABELS: Array<[keyof StatisticsRow, string, 'count' | 'percent']> = [
@@ -162,6 +168,25 @@ export async function readStoredOdds(db: D1Database, fixtureId: number) {
   };
 }
 
+export async function readLatestAvailability(db: D1Database, fixtureId: number, beforeKickoff: string) {
+  const row = await db
+    .prepare(`
+      SELECT lineups, injuries, captured_at
+      FROM fixture_availability_snapshots
+      WHERE fixture_id = ? AND captured_at < ?
+      ORDER BY captured_at DESC, id DESC
+      LIMIT 1
+    `)
+    .bind(fixtureId, beforeKickoff)
+    .first<AvailabilityRow>();
+  if (!row) return null;
+  return {
+    capturedAt: row.captured_at,
+    lineups: parseJsonArray<TeamLineup>(row.lineups),
+    injuries: parseJsonArray<PlayerInjury>(row.injuries),
+  };
+}
+
 // Home team first, then away, then anything else the provider supplied.
 function order<T>(rows: T[], teamOrder: number[], teamId: (row: T) => number) {
   return [...rows].sort((a, b) => {
@@ -172,9 +197,13 @@ function order<T>(rows: T[], teamOrder: number[], teamId: (row: T) => number) {
 }
 
 function parsePlayers(value: string): LineupPlayer[] {
+  return parseJsonArray<LineupPlayer>(value);
+}
+
+function parseJsonArray<T>(value: string): T[] {
   try {
     const parsed = JSON.parse(value) as unknown;
-    return Array.isArray(parsed) ? parsed as LineupPlayer[] : [];
+    return Array.isArray(parsed) ? parsed as T[] : [];
   } catch {
     return [];
   }

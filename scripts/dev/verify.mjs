@@ -192,6 +192,13 @@ try {
   check('model and market are scored together', (compared.body?.marketComparison?.matches ?? 0) > 0, `${compared.body?.marketComparison?.matches} matched results after settling ${settledWithMarket}`);
   check('v1, v2 and market use identical fixtures', (compared.body?.identicalFixtureComparison?.matches ?? 0) > 0 && compared.body?.identicalFixtureComparison?.entries?.length === 3, `${compared.body?.identicalFixtureComparison?.matches} shared fixtures`);
 
+  const labFeed = await api(`/api/football/intelligence?league=${LEAGUE}&season=${SEASON}`);
+  const labFixture = labFeed.body?.upcoming?.[0];
+  const labMatch = labFixture ? await api(`/api/football/match?fixture=${labFixture.id}`) : { body: null };
+  check('Match Lab receives player comparison evidence', (labMatch.body?.playerEvidence?.length ?? 0) > 0 && labMatch.body.playerEvidence.every((player) => typeof player.attackShare === 'number' && player.minutes > 0), `${labMatch.body?.playerEvidence?.length ?? 0} ranked players`);
+  check('Match Lab receives pre-kickoff availability', Boolean(labMatch.body?.availability?.capturedAt) && Array.isArray(labMatch.body?.availability?.lineups) && Array.isArray(labMatch.body?.availability?.injuries), labMatch.body?.availability?.capturedAt ?? 'no snapshot');
+  check('Match Lab head-to-head response is bounded', Array.isArray(labMatch.body?.h2h) && labMatch.body.h2h.length <= 8, `${labMatch.body?.h2h?.length ?? 0} prior meetings`);
+
   const withDetail = await api(`/api/football/history/coverage?missing=statistics&league=${LEAGUE}&season=${SEASON}&limit=5`);
   check('outstanding work is listable', typeof withDetail.body?.remaining === 'number', `${withDetail.body?.remaining} fixtures still without statistics`);
   const withPlayers = await api(`/api/football/history/coverage?missing=players&league=${LEAGUE}&season=${SEASON}&limit=5`);

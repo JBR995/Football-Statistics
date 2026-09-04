@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Progress } from '@/components/ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { StatisticsExplorer } from '@/components/statistics-explorer';
+import { MatchLabWorkbench } from '@/components/match-lab-workbench';
 
 type View = 'Overview' | 'Live Centre' | 'Match Lab' | 'Imports' | 'Data Explorer' | 'Models';
 type CompetitionCoverage = {
@@ -362,7 +363,7 @@ export function FootballLab() {
     <div className="mx-auto max-w-[1480px] px-4 py-6 sm:px-6 lg:px-8">
       {view === 'Overview' && <Overview feed={fixtureFeed} loading={fixturesLoading} intelligence={intelligence} intelligenceLoading={intelligenceLoading} competitions={competitionFeed?.competitions ?? []} selectedLeague={selectedLeague} setSelectedLeague={setSelectedLeague} setView={setView} />}
       {view === 'Live Centre' && <LiveCentre competitions={competitionFeed?.competitions ?? []} selectedLeague={selectedLeague} selectedSeason={selectedSeason ?? 2026} setSelectedLeague={setSelectedLeague} />}
-      {view === 'Match Lab' && <MatchLab competitions={competitionFeed?.competitions ?? []} selectedLeague={selectedLeague} selectedSeason={selectedSeason ?? 2026} setSelectedLeague={setSelectedLeague} intelligence={intelligence} intelligenceLoading={intelligenceLoading} />}
+      {view === 'Match Lab' && <MatchLabWorkbench competitions={competitionFeed?.competitions ?? []} selectedLeague={selectedLeague} selectedSeason={selectedSeason ?? 2026} setSelectedLeague={setSelectedLeague} intelligence={intelligence} intelligenceLoading={intelligenceLoading} />}
       {view === 'Imports' && <ImportDashboard competitions={competitionFeed?.competitions ?? []} />}
       {view === 'Data Explorer' && <DataExplorer feed={competitionFeed} loading={feedLoading} />}
       {view === 'Models' && <Models />}

@@ -131,7 +131,7 @@ for (const [index, { league, season }] of pending.entries()) {
 
 console.log(`\nImported ${imported} seasons, ${records} fixtures. ${failures.length} failed.`);
 for (const failure of failures) console.log(`  ${failure.label}: ${failure.message}`);
-process.exit(failures.length ? 1 : 0);
+process.exitCode = failures.length ? 1 : 0;
 
 async function fetchSeason(league, season) {
   const url = new URL(providerUrl);
