@@ -25,6 +25,7 @@ const SIZES = new Map([[39, 380], [40, 552], [41, 552], [42, 552], [2, 125]]);
 // empty-response handling can be exercised: MOCK_EMPTY=123,456. This is read
 // per request so the integration suite can turn the condition on mid-run.
 const isEmpty = (fixture) => new Set((process.env.MOCK_EMPTY ?? '').split(',').filter(Boolean)).has(String(fixture));
+const hasDuplicatePlayers = (fixture) => new Set((process.env.MOCK_DUPLICATE_PLAYERS ?? '').split(',').filter(Boolean)).has(String(fixture));
 
 export function createMockProvider(port = 8899) {
   const server = createServer((request, response) => {
@@ -162,7 +163,7 @@ function lineups(fixture) {
 }
 
 function playerStatistics(fixture) {
-  return teamsOf(fixture).map((id, side) => ({
+  const response = teamsOf(fixture).map((id, side) => ({
     team: { id, name: `Team ${id}` },
     players: Array.from({ length: 14 }, (_, index) => ({
       player: { id: id * 100 + index, name: `Player ${id}-${index}` },
@@ -181,6 +182,8 @@ function playerStatistics(fixture) {
       }],
     })),
   }));
+  if (hasDuplicatePlayers(fixture)) response[0].players.push(response[0].players[0]);
+  return response;
 }
 
 function odds(fixture) {

@@ -219,6 +219,19 @@ try {
     check('provider-empty fixtures are durably audited', afterEmpty.body?.remaining < withPlayers.body.remaining, `fixture ${emptyFixture} removed from actionable work; importer exit ${emptyImport.code}`);
     const auditAfterEmpty = await api('/api/football/history/coverage');
     check('provider-empty outcome is reported', auditAfterEmpty.body?.quality?.importOutcomes?.some((row) => row.detailClass === 'players' && row.status === 'empty'), 'player empty recorded in D1');
+
+    const duplicateFixture = afterEmpty.body?.fixtures?.[0]?.id;
+    if (duplicateFixture) {
+      process.env.MOCK_DUPLICATE_PLAYERS = String(duplicateFixture);
+      const duplicateImport = await runScript('scripts/import-match-detail.mjs', [
+        '--site', site, '--token', 'dev', '--provider', provider,
+        '--leagues', String(LEAGUE), '--seasons', String(SEASON), '--include', 'players',
+        '--budget', '1', '--batch', '1', '--delay', '0', '--retry-empty',
+      ]);
+      delete process.env.MOCK_DUPLICATE_PLAYERS;
+      const afterDuplicate = await api(`/api/football/history/coverage?missing=players&league=${LEAGUE}&season=${SEASON}&limit=5`);
+      check('duplicate provider player rows are safely collapsed', duplicateImport.code === 0 && afterDuplicate.body?.remaining < afterEmpty.body.remaining, `fixture ${duplicateFixture} imported once; importer exit ${duplicateImport.code}`);
+    }
   }
 
   const sample = await firstFixtureWithStatistics();

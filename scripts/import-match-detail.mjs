@@ -190,12 +190,9 @@ for (const [fixtureId, entry] of work) {
       if (parsed.length) {
         detail[name] = parsed;
         detail.imports.push({ detailClass: name, status: 'stored', message: null });
-        totals[name] += parsed.length;
         collected = true;
       } else {
         detail.imports.push({ detailClass: name, status: 'empty', message: null });
-        empty[name]++;
-        empties.add(`${fixtureId}:${name}`);
         collected = true;
       }
       if (name === 'lineups' || name === 'injuries') collected = true;
@@ -233,6 +230,14 @@ async function flush(details) {
     const body = await response.json().catch(() => null);
     if (!response.ok) throw new Error(body?.error ?? `the site returned ${response.status}`);
     uploaded += body.fixtures ?? details.length;
+    for (const detail of details) {
+      for (const name of Object.keys(totals)) totals[name] += detail[name]?.length ?? 0;
+      for (const outcome of detail.imports ?? []) {
+        if (outcome.status !== 'empty') continue;
+        empty[outcome.detailClass]++;
+        empties.add(`${detail.fixtureId}:${outcome.detailClass}`);
+      }
+    }
     console.log(`  uploaded ${body.fixtures} fixtures (${body.statistics} team rows, ${body.players ?? 0} player rows, ${body.lineups} line-ups, ${body.injuries ?? 0} injuries, ${body.odds} odds, ${body.availabilitySnapshots ?? 0} pre-kickoff snapshots)`);
   } catch (error) {
     failures.push(`upload of ${details.length} fixtures: ${error.message}`);
@@ -283,7 +288,7 @@ function parseStatistics(response) {
 }
 
 function parsePlayerStatistics(response) {
-  const rows = [];
+  const rows = new Map();
   for (const teamEntry of response) {
     const teamId = teamEntry?.team?.id;
     if (!teamId) continue;
@@ -292,7 +297,7 @@ function parsePlayerStatistics(response) {
       const statistics = entry?.statistics?.[0];
       if (!player?.id || !player?.name || !statistics) continue;
       const games = statistics.games ?? {};
-      rows.push({
+      const row = {
         teamId, playerId: player.id, playerName: player.name,
         position: games.position ?? null, minutes: number(games.minutes), rating: number(games.rating),
         captain: boolean(games.captain), substitute: boolean(games.substitute), offsides: number(statistics.offsides),
@@ -310,10 +315,17 @@ function parsePlayerStatistics(response) {
         penaltiesCommitted: number(statistics.penalty?.commited ?? statistics.penalty?.committed),
         penaltiesScored: number(statistics.penalty?.scored), penaltiesMissed: number(statistics.penalty?.missed),
         penaltiesSaved: number(statistics.penalty?.saved),
-      });
+      };
+      const key = `${teamId}:${player.id}`;
+      const existing = rows.get(key);
+      if (!existing || populatedFields(row) > populatedFields(existing)) rows.set(key, row);
     }
   }
-  return rows;
+  return [...rows.values()];
+}
+
+function populatedFields(row) {
+  return Object.values(row).filter((value) => value !== null && value !== undefined).length;
 }
 
 function parseLineups(response) {
