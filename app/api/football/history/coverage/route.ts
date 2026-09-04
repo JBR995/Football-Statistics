@@ -30,6 +30,25 @@ type CoverageRow = {
   with_odds: number;
 };
 
+type QualityCounts = FieldCounts & {
+  shots_total_zero: number;
+  shots_on_zero: number;
+  fouls_zero: number;
+  fouls_drawn?: number;
+  fouls_drawn_zero?: number;
+  yellow_cards_zero: number;
+  red_cards_zero: number;
+};
+
+type ReconciliationRow = {
+  groups: number;
+  shots_comparable: number; shots_exact: number;
+  shots_on_comparable: number; shots_on_exact: number;
+  fouls_comparable: number; fouls_exact: number;
+  yellow_comparable: number; yellow_exact: number;
+  red_comparable: number; red_exact: number;
+};
+
 export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
   const missing = params.get('missing');
@@ -92,6 +111,60 @@ export async function GET(request: Request) {
              SUM(red_cards IS NOT NULL) AS red_cards
       FROM fixture_player_statistics
     `).first<FieldCounts>();
+    const [teamQuality, playerQuality, reconciliation, outcomeRows, failedRows] = await Promise.all([
+      db.prepare(`
+        SELECT COUNT(*) AS rows,
+          SUM(shots_total IS NOT NULL) AS shots_total, SUM(shots_total = 0) AS shots_total_zero,
+          SUM(shots_on IS NOT NULL) AS shots_on, SUM(shots_on = 0) AS shots_on_zero,
+          SUM(fouls IS NOT NULL) AS fouls, SUM(fouls = 0) AS fouls_zero,
+          SUM(yellow_cards IS NOT NULL) AS yellow_cards, SUM(yellow_cards = 0) AS yellow_cards_zero,
+          SUM(red_cards IS NOT NULL) AS red_cards, SUM(red_cards = 0) AS red_cards_zero
+        FROM fixture_statistics
+      `).first<QualityCounts>(),
+      db.prepare(`
+        SELECT COUNT(*) AS rows,
+          SUM(shots_total IS NOT NULL) AS shots_total, SUM(shots_total = 0) AS shots_total_zero,
+          SUM(shots_on IS NOT NULL) AS shots_on, SUM(shots_on = 0) AS shots_on_zero,
+          SUM(fouls_committed IS NOT NULL) AS fouls, SUM(fouls_committed = 0) AS fouls_zero,
+          SUM(fouls_drawn IS NOT NULL) AS fouls_drawn, SUM(fouls_drawn = 0) AS fouls_drawn_zero,
+          SUM(yellow_cards IS NOT NULL) AS yellow_cards, SUM(yellow_cards = 0) AS yellow_cards_zero,
+          SUM(red_cards IS NOT NULL) AS red_cards, SUM(red_cards = 0) AS red_cards_zero
+        FROM fixture_player_statistics
+      `).first<QualityCounts>(),
+      db.prepare(`
+        WITH player_totals AS (
+          SELECT fixture_id, team_id, COUNT(*) AS player_rows,
+            SUM(shots_total) AS shots_total, SUM(shots_total IS NULL) AS shots_missing,
+            SUM(shots_on) AS shots_on, SUM(shots_on IS NULL) AS shots_on_missing,
+            SUM(fouls_committed) AS fouls, SUM(fouls_committed IS NULL) AS fouls_missing,
+            SUM(yellow_cards) AS yellow_cards, SUM(yellow_cards IS NULL) AS yellow_missing,
+            SUM(red_cards) AS red_cards, SUM(red_cards IS NULL) AS red_missing
+          FROM fixture_player_statistics GROUP BY fixture_id, team_id
+        )
+        SELECT COUNT(*) AS groups,
+          SUM(p.shots_missing = 0 AND t.shots_total IS NOT NULL) AS shots_comparable,
+          SUM(p.shots_missing = 0 AND t.shots_total IS NOT NULL AND p.shots_total = t.shots_total) AS shots_exact,
+          SUM(p.shots_on_missing = 0 AND t.shots_on IS NOT NULL) AS shots_on_comparable,
+          SUM(p.shots_on_missing = 0 AND t.shots_on IS NOT NULL AND p.shots_on = t.shots_on) AS shots_on_exact,
+          SUM(p.fouls_missing = 0 AND t.fouls IS NOT NULL) AS fouls_comparable,
+          SUM(p.fouls_missing = 0 AND t.fouls IS NOT NULL AND p.fouls = t.fouls) AS fouls_exact,
+          SUM(p.yellow_missing = 0 AND t.yellow_cards IS NOT NULL) AS yellow_comparable,
+          SUM(p.yellow_missing = 0 AND t.yellow_cards IS NOT NULL AND p.yellow_cards = t.yellow_cards) AS yellow_exact,
+          SUM(p.red_missing = 0 AND t.red_cards IS NOT NULL) AS red_comparable,
+          SUM(p.red_missing = 0 AND t.red_cards IS NOT NULL AND p.red_cards = t.red_cards) AS red_exact
+        FROM player_totals p JOIN fixture_statistics t ON t.fixture_id = p.fixture_id AND t.team_id = p.team_id
+      `).first<ReconciliationRow>(),
+      db.prepare(`SELECT detail_class, status, COUNT(*) AS count FROM fixture_detail_imports GROUP BY detail_class, status ORDER BY detail_class, status`).all<{ detail_class: string; status: string; count: number }>(),
+      db.prepare(`
+        SELECT i.fixture_id, i.detail_class, i.message, i.attempted_at,
+          c.name AS competition, f.season, ht.name AS home, at.name AS away
+        FROM fixture_detail_imports i
+        JOIN fixtures f ON f.id = i.fixture_id
+        JOIN competitions c ON c.id = f.competition_id AND c.season = f.season
+        JOIN teams ht ON ht.id = f.home_team_id JOIN teams at ON at.id = f.away_team_id
+        WHERE i.status = 'failed' ORDER BY i.attempted_at DESC LIMIT 20
+      `).all<{ fixture_id: number; detail_class: string; message: string | null; attempted_at: string; competition: string; season: number; home: string; away: string }>(),
+    ]);
 
     return Response.json({
       connected: true,
@@ -111,6 +184,17 @@ export async function GET(request: Request) {
       fields: {
         team: fieldCoverage(teamFields),
         player: fieldCoverage(playerFields),
+      },
+      quality: {
+        team: qualityCoverage(teamQuality, false),
+        player: qualityCoverage(playerQuality, true),
+        reconciliation: reconciliationCoverage(reconciliation),
+        importOutcomes: outcomeRows.results.map((row) => ({ detailClass: row.detail_class, status: row.status, count: Number(row.count) })),
+        failedFixtures: failedRows.results.map((row) => ({
+          fixtureId: row.fixture_id, detailClass: row.detail_class, message: row.message,
+          attemptedAt: row.attempted_at, competition: row.competition, season: row.season,
+          match: `${row.home} v ${row.away}`,
+        })),
       },
       checkedAt: new Date().toISOString(),
     }, { headers: { 'Cache-Control': 'no-store' } });
@@ -145,11 +229,14 @@ async function listMissing(db: D1Database, missing: string, params: URLSearchPar
   const playedOnly = missing === 'statistics' || missing === 'players' ? `AND ${COMPLETED}` : '';
   const repeat = params.get('repeat') === 'true' && (missing === 'lineups' || missing === 'injuries');
   const absent = repeat ? '' : `AND NOT EXISTS (SELECT 1 FROM ${table} d WHERE d.fixture_id = f.id)`;
+  const terminalEmpty = missing === 'statistics' || missing === 'players'
+    ? `AND NOT EXISTS (SELECT 1 FROM fixture_detail_imports i WHERE i.fixture_id = f.id AND i.detail_class = '${missing}' AND i.status = 'empty')`
+    : '';
   const rows = (await db.prepare(`
     SELECT f.id, f.kickoff
     FROM fixtures f
     WHERE f.competition_id = ? AND f.season = ? ${playedOnly}
-      ${absent}
+      ${absent} ${terminalEmpty}
     ORDER BY f.kickoff ASC
     LIMIT ?
   `).bind(league, season, limit).all<{ id: number; kickoff: string }>()).results;
@@ -158,7 +245,7 @@ async function listMissing(db: D1Database, missing: string, params: URLSearchPar
     SELECT COUNT(*) AS count
     FROM fixtures f
     WHERE f.competition_id = ? AND f.season = ? ${playedOnly}
-      ${absent}
+      ${absent} ${terminalEmpty}
   `).bind(league, season).first<{ count: number }>())?.count ?? 0;
 
   return Response.json({
@@ -189,5 +276,39 @@ function fieldCoverage(row: FieldCounts | null) {
     fouls: { stored: Number(row?.fouls ?? 0), of },
     yellowCards: { stored: Number(row?.yellow_cards ?? 0), of },
     redCards: { stored: Number(row?.red_cards ?? 0), of },
+  };
+}
+
+function qualityCoverage(row: QualityCounts | null, player: boolean) {
+  const total = Number(row?.rows ?? 0);
+  const field = (present: number | undefined, zero: number | undefined) => ({
+    present: Number(present ?? 0),
+    missing: Math.max(0, total - Number(present ?? 0)),
+    zero: Number(zero ?? 0),
+    of: total,
+  });
+  return {
+    rows: total,
+    shots: field(row?.shots_total, row?.shots_total_zero),
+    shotsOnTarget: field(row?.shots_on, row?.shots_on_zero),
+    foulsCommitted: field(row?.fouls, row?.fouls_zero),
+    ...(player ? { foulsDrawn: field(row?.fouls_drawn, row?.fouls_drawn_zero) } : {}),
+    yellowCards: field(row?.yellow_cards, row?.yellow_cards_zero),
+    redCards: field(row?.red_cards, row?.red_cards_zero),
+  };
+}
+
+function reconciliationCoverage(row: ReconciliationRow | null) {
+  const field = (comparable: number | undefined, exact: number | undefined) => ({
+    comparable: Number(comparable ?? 0), exact: Number(exact ?? 0),
+    different: Math.max(0, Number(comparable ?? 0) - Number(exact ?? 0)),
+  });
+  return {
+    groups: Number(row?.groups ?? 0),
+    shots: field(row?.shots_comparable, row?.shots_exact),
+    shotsOnTarget: field(row?.shots_on_comparable, row?.shots_on_exact),
+    fouls: field(row?.fouls_comparable, row?.fouls_exact),
+    yellowCards: field(row?.yellow_comparable, row?.yellow_exact),
+    redCards: field(row?.red_comparable, row?.red_exact),
   };
 }

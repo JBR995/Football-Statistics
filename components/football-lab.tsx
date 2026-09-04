@@ -14,6 +14,7 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } f
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { StatisticsExplorer } from '@/components/statistics-explorer';
 
 type View = 'Overview' | 'Live Centre' | 'Match Lab' | 'Imports' | 'Data Explorer' | 'Models';
 type CompetitionCoverage = {
@@ -746,6 +747,10 @@ function ImportDashboard({ competitions }: { competitions: LiveCompetition[] }) 
 }
 
 function DataExplorer({ feed, loading }: { feed: CompetitionFeed | null; loading: boolean }) {
+  return <StatisticsExplorer feed={feed} loading={loading} />;
+}
+
+export function LegacyDataExplorer({ feed, loading }: { feed: CompetitionFeed | null; loading: boolean }) {
   const [coverage, setCoverage] = useState<DetailCoverageFeed | null>(null);
   useEffect(() => {
     fetch('/api/football/history/coverage', { cache: 'no-store' })

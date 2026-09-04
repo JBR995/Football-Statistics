@@ -197,6 +197,30 @@ try {
   const withPlayers = await api(`/api/football/history/coverage?missing=players&league=${LEAGUE}&season=${SEASON}&limit=5`);
   check('outstanding player work is listable', typeof withPlayers.body?.remaining === 'number', `${withPlayers.body?.remaining} fixtures still without player statistics`);
 
+  const playerExplorer = await api(`/api/football/statistics?kind=players&league=${LEAGUE}&season=${SEASON}&limit=5`);
+  check('player explorer calculates totals and per-90 rates', playerExplorer.body?.connected === true && playerExplorer.body?.rows?.length > 0 && playerExplorer.body.rows[0].per90, `${playerExplorer.body?.pagination?.total ?? 0} player-season rows`);
+  const firstPlayer = playerExplorer.body?.rows?.[0];
+  const playerMatches = firstPlayer ? await api(`/api/football/statistics?kind=players&id=${firstPlayer.id}&team=${firstPlayer.teamId}&league=${LEAGUE}&season=${SEASON}`) : { body: null };
+  check('player explorer drills into match records', (playerMatches.body?.rows?.length ?? 0) > 0, `${playerMatches.body?.rows?.length ?? 0} matches`);
+  const teamExplorer = await api(`/api/football/statistics?kind=teams&league=${LEAGUE}&season=${SEASON}&venue=home&recent=5&limit=5`);
+  check('team explorer applies split and recent-form filters', teamExplorer.body?.connected === true && teamExplorer.body?.rows?.every((row) => row.homeMatches <= 5 && row.awayMatches === 0), `${teamExplorer.body?.rows?.length ?? 0} filtered teams`);
+  check('quality audit separates nulls, zeroes and reconciliation', coverage.body?.quality?.player?.shots?.zero > 0 && typeof coverage.body?.quality?.player?.shots?.missing === 'number' && typeof coverage.body?.quality?.reconciliation?.shots?.different === 'number', `${coverage.body?.quality?.reconciliation?.groups ?? 0} comparable fixture-team groups`);
+
+  const emptyFixture = withPlayers.body?.fixtures?.[0]?.id;
+  if (emptyFixture) {
+    process.env.MOCK_EMPTY = String(emptyFixture);
+    const emptyImport = await runScript('scripts/import-match-detail.mjs', [
+      '--site', site, '--token', 'dev', '--provider', provider,
+      '--leagues', String(LEAGUE), '--seasons', String(SEASON), '--include', 'players',
+      '--budget', '1', '--batch', '1', '--delay', '0', '--retry-empty',
+    ]);
+    delete process.env.MOCK_EMPTY;
+    const afterEmpty = await api(`/api/football/history/coverage?missing=players&league=${LEAGUE}&season=${SEASON}&limit=5`);
+    check('provider-empty fixtures are durably audited', afterEmpty.body?.remaining < withPlayers.body.remaining, `fixture ${emptyFixture} removed from actionable work; importer exit ${emptyImport.code}`);
+    const auditAfterEmpty = await api('/api/football/history/coverage');
+    check('provider-empty outcome is reported', auditAfterEmpty.body?.quality?.importOutcomes?.some((row) => row.detailClass === 'players' && row.status === 'empty'), 'player empty recorded in D1');
+  }
+
   const sample = await firstFixtureWithStatistics();
   if (sample) {
     const match = await api(`/api/football/match?fixture=${sample}`);

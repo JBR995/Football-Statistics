@@ -106,6 +106,13 @@ export type MatchDetail = {
   odds: BookmakerOdds[];
   injuries: PlayerInjury[];
   observed: Array<'lineups' | 'injuries'>;
+  imports: DetailImport[];
+};
+
+export type DetailImport = {
+  detailClass: 'statistics' | 'players' | 'lineups' | 'injuries' | 'odds';
+  status: 'stored' | 'empty' | 'failed';
+  message: string | null;
 };
 
 const BATCH_SIZE = 75;
@@ -187,6 +194,15 @@ export function oddsStatements(db: D1Database, fixtureId: number, odds: Bookmake
   ));
 }
 
+export function detailImportStatements(db: D1Database, fixtureId: number, imports: DetailImport[], updatedAt: string) {
+  return imports.map((item) => db.prepare(`
+    INSERT INTO fixture_detail_imports (fixture_id, detail_class, status, message, attempted_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(fixture_id, detail_class) DO UPDATE SET
+      status=excluded.status, message=excluded.message, attempted_at=excluded.attempted_at
+  `).bind(fixtureId, item.detailClass, item.status, item.message, updatedAt));
+}
+
 export async function storeMatchDetail(db: D1Database, details: MatchDetail[]) {
   const updatedAt = new Date().toISOString();
   const kickoffRows = details.length ? (await db
@@ -200,6 +216,7 @@ export async function storeMatchDetail(db: D1Database, details: MatchDetail[]) {
     ...playerStatisticsStatements(db, detail.fixtureId, detail.players, updatedAt),
     ...lineupStatements(db, detail.fixtureId, detail.lineups, updatedAt),
     ...oddsStatements(db, detail.fixtureId, detail.odds, updatedAt),
+    ...detailImportStatements(db, detail.fixtureId, detail.imports, updatedAt),
   ]).concat(availability.map((detail) => db.prepare(`
     INSERT INTO fixture_availability_snapshots (fixture_id, lineups, injuries, captured_at)
     VALUES (?, ?, ?, ?)

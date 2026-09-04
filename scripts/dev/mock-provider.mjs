@@ -22,8 +22,9 @@ const DAY = 86_400_000;
 const SIZES = new Map([[39, 380], [40, 552], [41, 552], [42, 552], [2, 125]]);
 
 // Fixtures the provider should claim to have no data for, so the importers'
-// empty-response handling can be exercised: MOCK_EMPTY=123,456
-const EMPTY = new Set((process.env.MOCK_EMPTY ?? '').split(',').filter(Boolean));
+// empty-response handling can be exercised: MOCK_EMPTY=123,456. This is read
+// per request so the integration suite can turn the condition on mid-run.
+const isEmpty = (fixture) => new Set((process.env.MOCK_EMPTY ?? '').split(',').filter(Boolean)).has(String(fixture));
 
 export function createMockProvider(port = 8899) {
   const server = createServer((request, response) => {
@@ -38,7 +39,7 @@ export function createMockProvider(port = 8899) {
     }
 
     const fixture = Number(url.searchParams.get('fixture'));
-    if (url.pathname !== '/fixtures' && EMPTY.has(String(fixture))) {
+    if (url.pathname !== '/fixtures' && isEmpty(fixture)) {
       return send({ errors: [], response: [] });
     }
 

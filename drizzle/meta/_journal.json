@@ -43,6 +43,13 @@
       "when": 1788368137295,
       "tag": "0005_steep_puppet_master",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1788374414474,
+      "tag": "0006_glossy_crystal",
+      "breakpoints": true
     }
   ]
 }

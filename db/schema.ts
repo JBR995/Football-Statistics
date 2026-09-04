@@ -154,6 +154,17 @@ export const fixturePlayerStatistics = sqliteTable('fixture_player_statistics', 
   index('idx_fixture_player_statistics_player').on(table.playerId, table.fixtureId),
 ]);
 
+export const fixtureDetailImports = sqliteTable('fixture_detail_imports', {
+  fixtureId: integer('fixture_id').notNull(),
+  detailClass: text('detail_class').notNull(),
+  status: text('status').notNull(),
+  message: text('message'),
+  attemptedAt: text('attempted_at').notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.fixtureId, table.detailClass] }),
+  index('idx_fixture_detail_imports_class_status').on(table.detailClass, table.status),
+]);
+
 export const fixtureAvailabilitySnapshots = sqliteTable('fixture_availability_snapshots', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   fixtureId: integer('fixture_id').notNull(),

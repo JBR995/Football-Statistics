@@ -1,5 +1,5 @@
 import { ensureFootballSchema } from '@/db/football';
-import { readKnownFixtures, storeMatchDetail, type BookmakerOdds, type LineupPlayer, type MatchDetail, type PlayerInjury, type PlayerStatistics, type TeamLineup, type TeamStatistics } from '@/db/match-detail';
+import { readKnownFixtures, storeMatchDetail, type BookmakerOdds, type DetailImport, type LineupPlayer, type MatchDetail, type PlayerInjury, type PlayerStatistics, type TeamLineup, type TeamStatistics } from '@/db/match-detail';
 
 // Per-match detail collected by a local importer: shot and possession counts,
 // line-ups, and bookmaker prices. Like the season upload, the provider call
@@ -74,6 +74,8 @@ function parseDetail(entry: unknown, index: number): MatchDetail | string {
   const injuries: PlayerInjury[] = [];
   const observed = parseObserved(row.observed);
   if (typeof observed === 'string') return `${at} ${observed}`;
+  const imports = parseImports(row.imports);
+  if (typeof imports === 'string') return `${at} ${imports}`;
 
   if (row.statistics !== undefined && row.statistics !== null) {
     if (!Array.isArray(row.statistics) || row.statistics.length > MAX_TEAMS) return `${at} must carry statistics for at most ${MAX_TEAMS} teams.`;
@@ -120,13 +122,31 @@ function parseDetail(entry: unknown, index: number): MatchDetail | string {
     }
   }
 
-  if (!statistics.length && !players.length && !lineups.length && !odds.length && !injuries.length && !observed.length) return `${at} carries no team statistics, player statistics, line-ups, injuries or odds.`;
+  if (!statistics.length && !players.length && !lineups.length && !odds.length && !injuries.length && !observed.length && !imports.length) return `${at} carries no team statistics, player statistics, line-ups, injuries, odds or import outcomes.`;
   if (duplicateTeams(statistics)) return `${at} repeats a team in its statistics.`;
   if (duplicateTeams(lineups)) return `${at} repeats a team in its line-ups.`;
   if (new Set(players.map((player) => `${player.teamId}:${player.playerId}`)).size !== players.length) return `${at} repeats a player statistics row.`;
   if (new Set(odds.map((book) => book.bookmakerId)).size !== odds.length) return `${at} repeats a bookmaker.`;
 
-  return { fixtureId, statistics, players, lineups, odds, injuries, observed };
+  return { fixtureId, statistics, players, lineups, odds, injuries, observed, imports };
+}
+
+function parseImports(value: unknown): DetailImport[] | string {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > 5) return 'has a malformed import-outcome list.';
+  const classes = new Set(['statistics', 'players', 'lineups', 'injuries', 'odds']);
+  const statuses = new Set(['stored', 'empty', 'failed']);
+  const parsed: DetailImport[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object') return 'has a malformed import outcome.';
+    const row = entry as Record<string, unknown>;
+    const detailClass = typeof row.detailClass === 'string' ? row.detailClass : '';
+    const status = typeof row.status === 'string' ? row.status : '';
+    if (!classes.has(detailClass) || !statuses.has(status)) return 'has an unsupported import outcome.';
+    parsed.push({ detailClass, status, message: optionalText(row.message, 240) } as DetailImport);
+  }
+  if (new Set(parsed.map((item) => item.detailClass)).size !== parsed.length) return 'repeats an import outcome.';
+  return parsed;
 }
 
 function parsePlayerStatistics(entry: unknown, at: string): PlayerStatistics | string {

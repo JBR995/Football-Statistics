@@ -44,6 +44,7 @@ import { parseArgs } from 'node:util';
 const PROVIDER = 'https://v3.football.api-sports.io';
 const MAX_BATCH = 50;
 const PROVIDER_RETRIES = 3;
+const SITE_RETRIES = 3;
 const CACHE_PATH = new URL('./.match-detail-cache.json', import.meta.url);
 
 const COMPETITIONS = [
@@ -177,7 +178,7 @@ let pending = [];
 
 for (const [fixtureId, entry] of work) {
   if (calls >= budget) break;
-  const detail = { fixtureId, statistics: [], players: [], lineups: [], injuries: [], odds: [], observed: [] };
+  const detail = { fixtureId, statistics: [], players: [], lineups: [], injuries: [], odds: [], observed: [], imports: [] };
   let collected = false;
 
   for (const name of entry.classes) {
@@ -188,15 +189,20 @@ for (const [fixtureId, entry] of work) {
       if (name === 'lineups' || name === 'injuries') detail.observed.push(name);
       if (parsed.length) {
         detail[name] = parsed;
+        detail.imports.push({ detailClass: name, status: 'stored', message: null });
         totals[name] += parsed.length;
         collected = true;
       } else {
+        detail.imports.push({ detailClass: name, status: 'empty', message: null });
         empty[name]++;
         empties.add(`${fixtureId}:${name}`);
+        collected = true;
       }
       if (name === 'lineups' || name === 'injuries') collected = true;
     } catch (error) {
       failures.push(`${nameOf(entry.league)} fixture ${fixtureId} ${name}: ${error.message}`);
+      detail.imports.push({ detailClass: name, status: 'failed', message: String(error.message).slice(0, 240) });
+      collected = true;
     }
     if (delayMs) await sleep(delayMs);
   }
@@ -214,7 +220,7 @@ if (failures.length) {
   for (const failure of failures.slice(0, 20)) console.log(`    ${failure}`);
 }
 await writeCache(empties);
-process.exit(failures.length ? 1 : 0);
+process.exitCode = failures.length ? 1 : 0;
 
 async function flush(details) {
   if (!details.length) return [];
@@ -382,15 +388,22 @@ function boolean(value) {
 async function readMissing(name, league, season, repeatable = false) {
   let url = `${site}/api/football/history/coverage?missing=${name}&league=${league}&season=${season}&limit=1000`;
   if (repeatable) url += '&repeat=true';
-  let response;
-  try {
-    response = await fetch(url, { headers: { 'OAI-Sites-Authorization': `Bearer ${siteToken}` } });
-  } catch (error) {
-    return fail(`Could not reach ${site}: ${error.message}. Check --site.`);
+  for (let attempt = 1; attempt <= SITE_RETRIES; attempt += 1) {
+    try {
+      const response = await fetch(url, { headers: { 'OAI-Sites-Authorization': `Bearer ${siteToken}` } });
+      if (response.ok) {
+        const payload = await response.json();
+        return { remaining: payload.remaining ?? 0, fixtures: payload.fixtures ?? [] };
+      }
+      if (response.status < 500 || attempt === SITE_RETRIES) {
+        return fail(`Could not read coverage: the site returned ${response.status}. Check --site and --token.`);
+      }
+    } catch (error) {
+      if (attempt === SITE_RETRIES) return fail(`Could not reach ${site}: ${error.message}. Check --site.`);
+    }
+    await sleep(attempt * 2_000);
   }
-  if (!response.ok) return fail(`Could not read coverage: the site returned ${response.status}. Check --site and --token.`);
-  const payload = await response.json();
-  return { remaining: payload.remaining ?? 0, fixtures: payload.fixtures ?? [] };
+  return fail(`Could not read coverage from ${site}.`);
 }
 
 async function readCache() {
